@@ -1,0 +1,12 @@
+# Prompt text and few-shot examples for the TOS clause classifier.
+# TODO: write the system prompt and per-category few-shot examples
+# (taxonomy is an open question — see root README).
+
+[system]
+prompt = ""
+
+[few_shot]
+# One array-of-tables entry per example, e.g.:
+# [[few_shot.examples]]
+# text = "..."
+# scores = [{ category = "arbitration", score = 2, explanation = "..." }]

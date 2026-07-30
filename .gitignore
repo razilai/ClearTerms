@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# runtime data (SQLite db etc.) — keep the dir, not its contents
+backend/data/*
+!backend/data/.gitkeep
+
+.env

@@ -25,8 +25,8 @@ core  (shared by all; imports from none of the above)
 
 ### `app/main.py`
 
-FastAPI app entrypoint. Currently just mounts `/health`. Wire the `api` routers
-here as they land.
+FastAPI app entrypoint. Mounts `/health` and the `api` routers, and owns the
+lifespan hook (logging setup, `init_db`, analysis-queue start/stop).
 
 ### `app/api/`
 
