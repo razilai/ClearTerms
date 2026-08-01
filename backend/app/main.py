@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api import api_router
+from app.api.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.db.engine import init_db
 from app.services.queue import queue
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="ClearTerms", lifespan=lifespan)
 app.include_router(api_router)
+register_exception_handlers(app)
 
 
 @app.get("/health")

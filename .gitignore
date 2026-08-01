@@ -6,3 +6,6 @@ backend/data/*
 !backend/data/.gitkeep
 
 .env
+
+# local agent guidance, not shared
+CLAUDE.md

@@ -2,22 +2,23 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PostCreate(BaseModel):
-    title: str
-    body: str
+    # Length caps mirror the VARCHAR columns on app.models.forum.Post.
+    title: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1)
     document_id: int | None = None
-    category: str | None = None
+    category: str | None = Field(default=None, max_length=64)
 
 
 class CommentCreate(BaseModel):
-    body: str
+    body: str = Field(min_length=1)
 
 
 class CommentUpdate(BaseModel):
-    body: str
+    body: str = Field(min_length=1)
 
 
 class CommentOut(BaseModel):
