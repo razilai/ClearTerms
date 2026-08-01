@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 
+# OS / editor
+.DS_Store
+.idea/
+
 # runtime data (SQLite db etc.) — keep the dir, not its contents
 backend/data/*
 !backend/data/.gitkeep
