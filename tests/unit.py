@@ -11,6 +11,12 @@ from app.agent.categories import (
     SCORE_SCALE,
     ClauseCategory,
 )
+from app.agent.classifier import (
+    load_prompts,
+    render_categories,
+    render_score_scale,
+    render_system_prompt,
+)
 from app.agent.evidence import is_verbatim, normalize
 from app.agent.output import ChunkFindings, ClauseScore, Finding, dedupe, densify
 
@@ -228,5 +234,85 @@ def test_is_verbatim_rejects_empty_evidence() -> None:
     """An empty string is a substring of everything; reject it explicitly."""
     assert not is_verbatim("", CHUNK)
     assert not is_verbatim("   ", CHUNK)
+
+
+# --- app.agent.classifier: prompt rendering ------------------------------
+
+
+def test_load_prompts_has_a_system_prompt_and_one_example() -> None:
+    prompts = load_prompts()
+    assert prompts["system"]["prompt"].strip()
+    assert len(prompts["few_shot"]["examples"]) == 1
+
+
+def test_rendered_prompt_contains_every_category_slug() -> None:
+    rendered = render_system_prompt()
+    for category in ClauseCategory:
+        assert category.value in rendered, category
+
+
+def test_rendered_prompt_contains_the_neutral_spec_text() -> None:
+    rendered = render_system_prompt()
+    for spec in CATEGORY_SPECS.values():
+        assert spec.detection in rendered
+        assert spec.standard in rendered
+        assert spec.aggressive in rendered
+
+
+def test_rendered_prompt_excludes_product_voice() -> None:
+    """display_name and description are for humans; loaded framing skews scores."""
+    rendered = render_system_prompt()
+    for spec in CATEGORY_SPECS.values():
+        assert spec.description not in rendered
+
+
+def test_rendered_prompt_contains_the_score_scale() -> None:
+    rendered = render_system_prompt()
+    for meaning in SCORE_SCALE.values():
+        assert meaning in rendered
+
+
+def test_rendered_prompt_has_no_unsubstituted_placeholders() -> None:
+    # Not a blanket "{" check: the rendered JSON example legitimately has braces.
+    rendered = render_system_prompt()
+    assert "{categories}" not in rendered
+    assert "{score_scale}" not in rendered
+    assert "{example_text}" not in rendered
+    assert "{example_output}" not in rendered
+
+
+def test_rendered_categories_include_boundary_rules() -> None:
+    rendered = render_categories()
+    for spec in CATEGORY_SPECS.values():
+        for rule in spec.boundaries:
+            assert rule in rendered
+
+
+def test_example_findings_are_valid_findings() -> None:
+    """The few-shot example must parse as real model output."""
+    example = load_prompts()["few_shot"]["examples"][0]
+    findings = [Finding(**f) for f in example["findings"]]
+    assert len(findings) >= 2
+    assert {f.score for f in findings} == {1, 2}
+
+
+def test_example_evidence_is_verbatim_from_the_example_text() -> None:
+    """The example must model the behaviour it asks for."""
+    example = load_prompts()["few_shot"]["examples"][0]
+    for finding in example["findings"]:
+        assert is_verbatim(finding["evidence"], example["text"]), finding["category"]
+
+
+def test_example_omits_most_categories() -> None:
+    """Sparseness is taught by showing categories left out."""
+    example = load_prompts()["few_shot"]["examples"][0]
+    reported = {f["category"] for f in example["findings"]}
+    assert len(reported) < len(ClauseCategory)
+
+
+def test_render_score_scale_lists_all_three_levels() -> None:
+    rendered = render_score_scale()
+    for score in SCORE_SCALE:
+        assert str(score) in rendered
 
 
