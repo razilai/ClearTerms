@@ -10,7 +10,10 @@ from functools import lru_cache
 from importlib import resources
 from typing import Any
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import Agent, ModelRetry, NativeOutput, RunContext
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.ollama import OllamaProvider
+from pydantic_ai.settings import ModelSettings
 
 from app.agent.categories import (
     CATEGORY_SPECS,
@@ -20,7 +23,8 @@ from app.agent.categories import (
     ClauseCategory,
 )
 from app.agent.evidence import is_verbatim
-from app.agent.output import Finding
+from app.agent.output import ChunkClassification, ChunkFindings, Finding, densify
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -110,3 +114,46 @@ def check_evidence(findings: list[Finding], chunk: str, retry: int) -> list[Find
         )
     dropped = {id(f) for f in bad}
     return [f for f in findings if id(f) not in dropped]
+
+
+@lru_cache
+def build_agent() -> Agent[str, ChunkFindings]:
+    """Construct the classifier agent. Cached — one per process.
+
+    ``deps_type=str`` carries the chunk text so the output validator can check
+    quoted evidence against the source.
+
+    ``NativeOutput`` sends the schema in ``response_format`` so Ollama
+    constrains decoding against it, rather than PydanticAI's default tool
+    calling, which validates after the fact and pays a full forward pass per
+    failure.
+    """
+    model = OpenAIChatModel(
+        settings.agent_model,
+        provider=OllamaProvider(base_url=f"{settings.ollama_base_url.rstrip('/')}/v1"),
+    )
+    agent = Agent(
+        model,
+        deps_type=str,
+        output_type=NativeOutput(ChunkFindings),
+        instructions=render_system_prompt(),
+        retries=MAX_EVIDENCE_RETRIES,
+        model_settings=ModelSettings(temperature=0.0),
+    )
+
+    @agent.output_validator
+    def _validate_evidence(ctx: RunContext[str], output: ChunkFindings) -> ChunkFindings:
+        return ChunkFindings(findings=check_evidence(output.findings, ctx.deps, ctx.retry))
+
+    return agent
+
+
+async def classify_chunk(text: str) -> ChunkClassification:
+    """Classify one TOS chunk against all clause categories.
+
+    Returns a score for every category, including the ones the model did not
+    report. ``deps`` is the raw chunk, so evidence is checked against exactly
+    the text the model was shown.
+    """
+    result = await build_agent().run(f"Excerpt:\n{text}", deps=text)
+    return densify(result.output.findings)
