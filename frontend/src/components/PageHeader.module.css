@@ -1,0 +1,11 @@
+.root {
+  margin-bottom: 28px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--mantine-color-ink-2);
+}
+
+.description {
+  margin-top: 6px;
+  color: var(--mantine-color-ink-6);
+  max-width: 52ch;
+}

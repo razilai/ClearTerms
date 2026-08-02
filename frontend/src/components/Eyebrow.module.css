@@ -1,0 +1,7 @@
+.eyebrow {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--mantine-color-redline-6);
+}

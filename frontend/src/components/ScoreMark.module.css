@@ -1,0 +1,54 @@
+.row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--mantine-color-ink-1);
+}
+
+.index {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 0.75rem;
+  color: var(--mantine-color-ink-6);
+  width: 2.5rem;
+}
+
+.label {
+  font-weight: 500;
+  width: 11rem;
+}
+
+.track {
+  flex: 1;
+  position: relative;
+  height: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.clean {
+  width: 100%;
+  border-top: 1px solid var(--mantine-color-ink-3);
+}
+
+.strike {
+  background-color: var(--mantine-color-redline-6);
+  border-radius: 1px;
+}
+
+.score {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 0.8rem;
+  width: 3rem;
+  text-align: right;
+}
+
+.note {
+  margin-top: 4px;
+  margin-left: 2.5rem;
+  display: inline-block;
+  padding: 2px 8px;
+  background-color: var(--mantine-color-highlight-1);
+  border-left: 3px solid var(--mantine-color-highlight-5);
+  font-family: Spectral, Georgia, serif;
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--mantine-color-ink-8);
+}

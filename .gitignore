@@ -8,4 +8,5 @@ backend/data/*
 .env
 
 # local agent guidance, not shared
+.claude/
 CLAUDE.md

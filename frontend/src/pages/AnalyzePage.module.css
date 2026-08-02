@@ -1,0 +1,32 @@
+/* The paste area is the hero surface — a legal-pad sheet: a full-height red
+   margin rule at the left, text set past it in the document serif. */
+.pasteArea {
+  background-color: var(--mantine-color-white);
+  background-image: linear-gradient(
+    to right,
+    transparent 0,
+    transparent 44px,
+    var(--mantine-color-redline-6) 44px,
+    var(--mantine-color-redline-6) 45px,
+    transparent 45px
+  );
+  border: 1px solid var(--mantine-color-ink-2);
+  border-radius: 2px;
+  padding-left: 60px;
+  font-family: Spectral, Georgia, serif;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--mantine-color-ink-9);
+}
+
+.pasteArea::placeholder {
+  font-style: italic;
+  color: var(--mantine-color-ink-4);
+}
+
+.statusLine {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--mantine-color-ink-5);
+}

@@ -1,0 +1,56 @@
+.stamp {
+  display: inline-block;
+  font-family: Spectral, Georgia, serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  border: 2px solid currentColor;
+  outline: 1px solid currentColor;
+  outline-offset: 3px;
+  opacity: 0.9;
+  user-select: none;
+}
+
+.lg {
+  font-size: 1.75rem;
+  letter-spacing: 0.22em;
+  padding: 0.35em 0.9em 0.35em 1.1em;
+  transform: rotate(-4deg);
+  animation: thump 240ms cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+}
+
+.sm {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  padding: 0.1em 0.5em 0.1em 0.6em;
+  border-width: 1px;
+  outline-offset: 2px;
+}
+
+.up {
+  color: var(--mantine-color-ok-6);
+}
+
+.down {
+  color: var(--mantine-color-redline-6);
+}
+
+.unknown {
+  color: var(--mantine-color-ink-8);
+}
+
+@keyframes thump {
+  from {
+    transform: rotate(-4deg) scale(1.25);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-4deg) scale(1);
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg {
+    animation: none;
+  }
+}
