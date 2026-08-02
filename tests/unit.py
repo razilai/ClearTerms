@@ -11,6 +11,7 @@ from app.agent.categories import (
     SCORE_SCALE,
     ClauseCategory,
 )
+from app.agent.evidence import is_verbatim, normalize
 from app.agent.output import ChunkFindings, ClauseScore, Finding, dedupe, densify
 
 # Frozen on purpose: these strings are stored in Analysis.category and
@@ -167,5 +168,65 @@ def test_densify_dedupes_before_expanding() -> None:
     result = densify(findings)
     data = next(s for s in result.scores if s.category is ClauseCategory.DATA_COLLECTION)
     assert data.score == 2
+
+
+# --- app.agent.evidence --------------------------------------------------
+
+CHUNK = (
+    "14. Limitation of Liability. The Service is provided “as is” and we "
+    "disclaim all warranties — express or implied.\nOur total liability shall "
+    "not exceed one hundred dollars."
+)
+
+
+def test_normalize_collapses_whitespace_runs() -> None:
+    assert normalize("a  b\n\tc") == "a b c"
+
+
+def test_normalize_straightens_curly_quotes() -> None:
+    assert normalize("“as is”") == '"as is"'
+    assert normalize("it’s") == "it's"
+
+
+def test_normalize_flattens_dashes() -> None:
+    assert normalize("a — b") == "a - b"
+
+
+def test_normalize_casefolds() -> None:
+    assert normalize("As Is") == "as is"
+
+
+def test_is_verbatim_accepts_an_exact_quote() -> None:
+    assert is_verbatim("Our total liability shall not exceed one hundred dollars.", CHUNK)
+
+
+def test_is_verbatim_accepts_straightened_quotes() -> None:
+    """The model retypes curly quotes as straight ones constantly."""
+    assert is_verbatim('The Service is provided "as is"', CHUNK)
+
+
+def test_is_verbatim_accepts_a_folded_line_break() -> None:
+    assert is_verbatim(
+        "express or implied. Our total liability shall not exceed one hundred dollars.",
+        CHUNK,
+    )
+
+
+def test_is_verbatim_accepts_different_casing() -> None:
+    assert is_verbatim("LIMITATION OF LIABILITY", CHUNK)
+
+
+def test_is_verbatim_rejects_a_paraphrase() -> None:
+    assert not is_verbatim("Liability is capped at one hundred dollars.", CHUNK)
+
+
+def test_is_verbatim_rejects_an_invented_quote() -> None:
+    assert not is_verbatim("You agree to binding arbitration.", CHUNK)
+
+
+def test_is_verbatim_rejects_empty_evidence() -> None:
+    """An empty string is a substring of everything; reject it explicitly."""
+    assert not is_verbatim("", CHUNK)
+    assert not is_verbatim("   ", CHUNK)
 
 
