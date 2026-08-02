@@ -1,9 +1,13 @@
 """Unit tests for pure backend logic (no db, no HTTP, no LLM)."""
 
+import asyncio
+import inspect
+
 import pytest
 from pydantic import ValidationError
-from pydantic_ai import ModelRetry
+from pydantic_ai import Agent, ModelRetry
 
+from app.agent import classifier
 from app.agent.categories import (
     CATEGORY_SPECS,
     MAX_SCORE,
@@ -14,14 +18,23 @@ from app.agent.categories import (
 )
 from app.agent.classifier import (
     MAX_EVIDENCE_RETRIES,
+    build_agent,
     check_evidence,
+    classify_chunk,
     load_prompts,
     render_categories,
     render_score_scale,
     render_system_prompt,
 )
 from app.agent.evidence import is_verbatim, normalize
-from app.agent.output import ChunkFindings, ClauseScore, Finding, dedupe, densify
+from app.agent.output import (
+    ChunkClassification,
+    ChunkFindings,
+    ClauseScore,
+    Finding,
+    dedupe,
+    densify,
+)
 
 # Frozen on purpose: these strings are stored in Analysis.category and
 # Preference.category, so changing one invalidates cached analyses and orphans
@@ -387,5 +400,51 @@ def test_dropped_findings_densify_to_zero() -> None:
     )
     assert arbitration.score == SCORE_ABSENT
     assert arbitration.evidence is None
+
+
+# --- app.agent.classifier: agent wiring ----------------------------------
+
+
+def test_build_agent_returns_an_agent() -> None:
+    assert isinstance(build_agent(), Agent)
+
+
+def test_build_agent_is_cached() -> None:
+    """One agent per process — rebuilding re-renders the prompt every call."""
+    assert build_agent() is build_agent()
+
+
+def test_classify_chunk_is_async() -> None:
+    assert inspect.iscoroutinefunction(classify_chunk)
+
+
+def test_classify_chunk_returns_all_six_categories(monkeypatch) -> None:
+    """The dense contract holds regardless of what the model reported."""
+
+    class _Result:
+        output = ChunkFindings(
+            findings=[
+                Finding(
+                    category=ClauseCategory.ARBITRATION,
+                    evidence="binding arbitration",
+                    score=2,
+                    explanation="Mandatory, no opt-out.",
+                )
+            ]
+        )
+
+    class _FakeAgent:
+        async def run(self, prompt: str, deps: str) -> _Result:
+            return _Result()
+
+    monkeypatch.setattr(classifier, "build_agent", lambda: _FakeAgent())
+
+    result = asyncio.run(classifier.classify_chunk("You agree to binding arbitration."))
+    assert isinstance(result, ChunkClassification)
+    assert [s.category for s in result.scores] == list(ClauseCategory)
+    arbitration = next(
+        s for s in result.scores if s.category is ClauseCategory.ARBITRATION
+    )
+    assert arbitration.score == 2
 
 
