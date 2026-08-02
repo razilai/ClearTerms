@@ -7,10 +7,11 @@ from app.agent.categories import (
     CATEGORY_SPECS,
     MAX_SCORE,
     MIN_SCORE,
+    SCORE_ABSENT,
     SCORE_SCALE,
     ClauseCategory,
 )
-from app.agent.output import ChunkFindings, ClauseScore, Finding
+from app.agent.output import ChunkFindings, ClauseScore, Finding, dedupe, densify
 
 # Frozen on purpose: these strings are stored in Analysis.category and
 # Preference.category, so changing one invalidates cached analyses and orphans
@@ -102,5 +103,69 @@ def test_clause_score_allows_absent_category() -> None:
     absent = ClauseScore(category=ClauseCategory.LIABILITY, score=0)
     assert absent.evidence is None
     assert absent.explanation is None
+
+
+# --- app.agent.output: dedupe and densify --------------------------------
+
+
+def _finding(category: ClauseCategory, score: int = 2) -> Finding:
+    return Finding(
+        category=category,
+        evidence=f"evidence for {category.value}",
+        score=score,
+        explanation=f"explanation for {category.value}",
+    )
+
+
+def test_densify_returns_every_category_in_enum_order() -> None:
+    result = densify([_finding(ClauseCategory.ARBITRATION)])
+    assert [s.category for s in result.scores] == list(ClauseCategory)
+
+
+def test_densify_fills_absent_categories_with_zero_and_no_evidence() -> None:
+    result = densify([_finding(ClauseCategory.ARBITRATION)])
+    absent = [s for s in result.scores if s.category is not ClauseCategory.ARBITRATION]
+    assert all(s.score == SCORE_ABSENT for s in absent)
+    assert all(s.evidence is None and s.explanation is None for s in absent)
+
+
+def test_densify_preserves_reported_findings() -> None:
+    result = densify([_finding(ClauseCategory.LIABILITY, score=1)])
+    liability = next(s for s in result.scores if s.category is ClauseCategory.LIABILITY)
+    assert liability.score == 1
+    assert liability.evidence == "evidence for liability"
+    assert liability.explanation == "explanation for liability"
+
+
+def test_densify_of_nothing_is_six_zeros() -> None:
+    result = densify([])
+    assert len(result.scores) == len(ClauseCategory)
+    assert all(s.score == SCORE_ABSENT for s in result.scores)
+
+
+def test_evidence_is_present_exactly_when_score_is_nonzero() -> None:
+    result = densify([_finding(ClauseCategory.TERMINATION, score=1)])
+    for score in result.scores:
+        assert (score.evidence is not None) == (score.score > SCORE_ABSENT)
+
+
+def test_dedupe_keeps_the_highest_score_per_category() -> None:
+    findings = [
+        _finding(ClauseCategory.ARBITRATION, score=1),
+        _finding(ClauseCategory.ARBITRATION, score=2),
+    ]
+    deduped = dedupe(findings)
+    assert len(deduped) == 1
+    assert deduped[0].score == 2
+
+
+def test_densify_dedupes_before_expanding() -> None:
+    findings = [
+        _finding(ClauseCategory.DATA_COLLECTION, score=2),
+        _finding(ClauseCategory.DATA_COLLECTION, score=1),
+    ]
+    result = densify(findings)
+    data = next(s for s in result.scores if s.category is ClauseCategory.DATA_COLLECTION)
+    assert data.score == 2
 
 
