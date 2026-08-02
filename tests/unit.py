@@ -2,6 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
+from pydantic_ai import ModelRetry
 
 from app.agent.categories import (
     CATEGORY_SPECS,
@@ -12,6 +13,8 @@ from app.agent.categories import (
     ClauseCategory,
 )
 from app.agent.classifier import (
+    MAX_EVIDENCE_RETRIES,
+    check_evidence,
     load_prompts,
     render_categories,
     render_score_scale,
@@ -314,5 +317,75 @@ def test_render_score_scale_lists_all_three_levels() -> None:
     rendered = render_score_scale()
     for score in SCORE_SCALE:
         assert str(score) in rendered
+
+
+# --- app.agent.classifier: evidence validator ----------------------------
+
+VALIDATOR_CHUNK = (
+    "You agree that all disputes shall be resolved by binding arbitration. "
+    "We may terminate your account at any time for any reason."
+)
+
+
+def _quoted(category: ClauseCategory, evidence: str, score: int = 2) -> Finding:
+    return Finding(
+        category=category,
+        evidence=evidence,
+        score=score,
+        explanation=f"explanation for {category.value}",
+    )
+
+
+def test_check_evidence_passes_verbatim_findings_through() -> None:
+    findings = [
+        _quoted(
+            ClauseCategory.ARBITRATION,
+            "all disputes shall be resolved by binding arbitration",
+        )
+    ]
+    assert check_evidence(findings, VALIDATOR_CHUNK, retry=0) == findings
+
+
+def test_check_evidence_accepts_an_empty_result() -> None:
+    assert check_evidence([], VALIDATOR_CHUNK, retry=0) == []
+
+
+def test_check_evidence_retries_on_a_bad_quote() -> None:
+    findings = [_quoted(ClauseCategory.ARBITRATION, "you must arbitrate everything")]
+    with pytest.raises(ModelRetry):
+        check_evidence(findings, VALIDATOR_CHUNK, retry=0)
+
+
+def test_retry_message_names_the_offending_category() -> None:
+    findings = [_quoted(ClauseCategory.ARBITRATION, "you must arbitrate everything")]
+    with pytest.raises(ModelRetry) as excinfo:
+        check_evidence(findings, VALIDATOR_CHUNK, retry=0)
+    assert "arbitration" in str(excinfo.value)
+
+
+def test_check_evidence_drops_a_bad_quote_after_the_retry() -> None:
+    findings = [_quoted(ClauseCategory.ARBITRATION, "you must arbitrate everything")]
+    assert check_evidence(findings, VALIDATOR_CHUNK, retry=MAX_EVIDENCE_RETRIES) == []
+
+
+def test_dropping_one_finding_keeps_the_others() -> None:
+    good = _quoted(
+        ClauseCategory.TERMINATION,
+        "We may terminate your account at any time for any reason.",
+    )
+    bad = _quoted(ClauseCategory.ARBITRATION, "you must arbitrate everything")
+    surviving = check_evidence([good, bad], VALIDATOR_CHUNK, retry=MAX_EVIDENCE_RETRIES)
+    assert surviving == [good]
+
+
+def test_dropped_findings_densify_to_zero() -> None:
+    bad = _quoted(ClauseCategory.ARBITRATION, "you must arbitrate everything")
+    surviving = check_evidence([bad], VALIDATOR_CHUNK, retry=MAX_EVIDENCE_RETRIES)
+    result = densify(surviving)
+    arbitration = next(
+        s for s in result.scores if s.category is ClauseCategory.ARBITRATION
+    )
+    assert arbitration.score == SCORE_ABSENT
+    assert arbitration.evidence is None
 
 

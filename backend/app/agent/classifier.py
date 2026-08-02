@@ -4,10 +4,13 @@ Plain text in, structured scores out. No cache, db, or preference awareness.
 """
 
 import json
+import logging
 import tomllib
 from functools import lru_cache
 from importlib import resources
 from typing import Any
+
+from pydantic_ai import ModelRetry
 
 from app.agent.categories import (
     CATEGORY_SPECS,
@@ -16,9 +19,15 @@ from app.agent.categories import (
     SCORE_STANDARD,
     ClauseCategory,
 )
+from app.agent.evidence import is_verbatim
+from app.agent.output import Finding
+
+logger = logging.getLogger(__name__)
 
 PROMPTS_PACKAGE = "app.agent.prompts"
 PROMPTS_FILE = "prompts.toml"
+
+MAX_EVIDENCE_RETRIES = 1
 
 
 @lru_cache
@@ -70,3 +79,34 @@ def render_system_prompt() -> str:
         example_text=example["text"].strip(),
         example_output=json.dumps({"findings": example["findings"]}, indent=2),
     )
+
+
+def check_evidence(findings: list[Finding], chunk: str, retry: int) -> list[Finding]:
+    """Enforce that every finding quotes the chunk verbatim.
+
+    Constrained decoding guarantees the output is schema-shaped; it says
+    nothing about whether the quote is real. This is that check.
+
+    On the first failing attempt the model is asked to try again, with the
+    offending categories named. If it fails again, the offending findings are
+    dropped — they densify to a score of 0 — so that one stubborn quote does
+    not cost the chunk its other findings.
+    """
+    bad = [f for f in findings if not is_verbatim(f.evidence, chunk)]
+    if not bad:
+        return findings
+
+    if retry < MAX_EVIDENCE_RETRIES:
+        names = ", ".join(sorted(f.category.value for f in bad))
+        raise ModelRetry(
+            f"The evidence given for these categories does not appear in the "
+            f"excerpt: {names}. Copy the exact words from the excerpt, or leave "
+            f"the category out."
+        )
+
+    for finding in bad:
+        logger.warning(
+            "dropping %s: evidence not found in chunk", finding.category.value
+        )
+    dropped = {id(f) for f in bad}
+    return [f for f in findings if id(f) not in dropped]
