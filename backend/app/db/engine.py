@@ -12,7 +12,13 @@ SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 async def init_db() -> None:
     """Create tables from Base.metadata and enable SQLite WAL mode."""
-    # TODO: implement (import app.models for metadata side effects, create_all, PRAGMA journal_mode=WAL)
+    # Imported for the side effect of registering every table on Base.metadata.
+    import app.models  # noqa: F401
+    from app.models.base import Base
+
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        await conn.run_sync(Base.metadata.create_all)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
