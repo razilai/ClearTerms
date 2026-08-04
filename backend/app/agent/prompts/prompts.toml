@@ -1,12 +1,48 @@
-# Prompt text and few-shot examples for the TOS clause classifier.
-# TODO: write the system prompt and per-category few-shot examples
-# (taxonomy is an open question — see root README).
+# Prompt template and few-shot example for the TOS clause classifier.
+#
+# Category text is NOT duplicated here. `classifier.render_system_prompt`
+# injects it from `app.agent.categories`, which stays the single source of
+# truth. Only the neutral fields (detection / standard / aggressive /
+# boundaries) are rendered; display_name and description are product voice for
+# humans and must not reach the model.
 
 [system]
-prompt = ""
+prompt = """
+You classify one excerpt from a terms-of-service document.
 
-[few_shot]
-# One array-of-tables entry per example, e.g.:
-# [[few_shot.examples]]
-# text = "..."
-# scores = [{ category = "arbitration", score = 2, explanation = "..." }]
+Report every category listed below that the excerpt actually addresses. For
+each one, quote the exact words from the excerpt that show it, then score it.
+
+Scoring scale:
+{score_scale}
+
+Report only categories the excerpt addresses. Leaving a category out is how you
+say it is absent — there is no score of 0 for you to report.
+
+The `evidence` field must be copied word for word from the excerpt. Do not
+paraphrase it, shorten it, or tidy up its punctuation. If you cannot quote the
+words, do not report the category.
+
+Judge the excerpt against what mainstream consumer services do, not against
+what would be ideal for the user. Most clauses are ordinary and score 1.
+
+Categories:
+{categories}
+
+Example excerpt:
+{example_text}
+
+Example output:
+{example_output}
+"""
+
+[[few_shot.examples]]
+text = """
+9. Changes to these Terms. We may revise these Terms at any time by posting the revised version on our website. Revisions take effect immediately upon posting, and your continued use of the Service after that time constitutes your acceptance of them.
+
+10. Cancellation. You may cancel your subscription at any time from the account settings page. We will send you an email reminder seven days before each annual renewal charge.
+"""
+findings = [
+  { category = "unilateral_changes", evidence = "Revisions take effect immediately upon posting, and your continued use of the Service after that time constitutes your acceptance of them.", score = 2, explanation = "Changes bind the user the moment they are posted, with no direct notice and no window to reject them; continued use is deemed acceptance." },
+  { category = "termination", evidence = "You may cancel your subscription at any time from the account settings page. We will send you an email reminder seven days before each annual renewal charge.", score = 1, explanation = "Self-serve cancellation with an advance reminder before the renewal charge — ordinary consumer terms." },
+]
