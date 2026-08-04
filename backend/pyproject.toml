@@ -41,3 +41,7 @@ python_files = ["unit.py", "integration.py", "system.py", "security.py", "stress
 # Pin backend/ explicitly (relative to rootdir) so `import app` does not depend
 # on the editable install's .pth being honoured.
 pythonpath = ["."]
+# Tests needing a live Ollama are deselected by default: they take minutes.
+# Run them with `uv run pytest -m slow`.
+markers = ["slow: requires a live Ollama server"]
+addopts = "-m 'not slow'"

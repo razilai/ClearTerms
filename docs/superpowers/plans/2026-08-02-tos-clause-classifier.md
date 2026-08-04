@@ -10,6 +10,22 @@
 
 **Design spec:** `docs/superpowers/specs/2026-08-02-tos-clause-classifier-design.md`
 
+> **Status: executed, then amended.** All seven tasks below were implemented as
+> written. Three things changed afterwards, so the task code in this document is
+> a record of what was built, not a description of the current code. The spec is
+> the up-to-date document.
+>
+> 1. **`dedupe` was replaced by `drop_duplicate_findings`.** Categories no longer
+>    collapse to their highest-scoring finding — `ClauseScore` now carries
+>    `findings: list[Finding]` and every clause survives, with `score` as their
+>    max. `ClauseScore.evidence` and `ClauseScore.explanation` are gone; the
+>    per-clause data lives on each `Finding`.
+> 2. **A `pythonpath` entry was added** to `[tool.pytest.ini_options]`. The
+>    editable install's `.pth` is not honoured in this venv, so `import app` was
+>    resolving only via the current working directory.
+> 3. **The model changed** from `qwen2.5:7b-instruct` to `qwen3:4b`, with
+>    `model_version` bumped to match.
+
 ## Global Constraints
 
 - Scope is `backend/app/agent/` only. Do not touch `app/services/`, `app/api/`, `app/db/`, or `app/models/`. Chunking, caching, per-category max across chunks, and verdict computation are owned by `app/services/analysis.py` and are out of scope.
@@ -1204,11 +1220,13 @@ git commit -m "feat(agent): Ollama agent construction and classify_chunk"
 
 ---
 
-## Deferred to integration testing
+## Integration testing — done
 
-These need a running Ollama with `qwen2.5:7b-instruct` pulled, and belong in `tests/integration.py`, not `tests/unit.py`. The Ollama binary is installed on this machine but the server was not responding when this plan was written.
+`tests/integration.py` was written and run against a live Ollama on `qwen3:4b`: **13 passed in 8m27s**. Every question this section deferred is now answered.
 
-- Whether `NativeOutput` round-trips `Literal[1, 2]` cleanly through Ollama's JSON-schema handling, or whether it must be widened to a plain `int` with a Pydantic-side constraint. This is the one open item from the spec.
-- Whether the model honours sparseness in practice, or reports categories the excerpt does not address.
-- Whether `evidence` comes back verbatim often enough that the retry path stays rare.
-- End-to-end latency per chunk, which determines the concurrency limit `services` should use against `OLLAMA_NUM_PARALLEL`.
+- `Literal[1, 2]` round-trips cleanly through Ollama's JSON-schema handling. No widening to a plain `int` needed. Pydantic's `$defs`/`$ref` output caused no trouble either.
+- The model honours sparseness: the dispute-resolution chunk reported ≤3 categories and the definitions chunk ≤1.
+- Evidence came back verbatim on every finding — the retry path never fired.
+- Latency was ~3 minutes per chunk on an 8 GB M2 Air, which is swap-bound and not representative. Re-measure on the GPU VM before choosing the concurrency limit `services` uses against `OLLAMA_NUM_PARALLEL`.
+
+The suite is marked `slow` and deselected by default, so a routine `uv run pytest` runs 54 unit tests in about a second. Run the integration tests with `uv run pytest -m slow`.

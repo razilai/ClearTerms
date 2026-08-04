@@ -39,12 +39,18 @@ class ChunkFindings(BaseModel):
 
 
 class ClauseScore(BaseModel):
-    """One category after densifying. Agent-facing schema."""
+    """One category after densifying. Agent-facing schema.
+
+    ``findings`` holds every clause the chunk contained for this category, not
+    just the worst one: a TOS with four separate predatory arbitration
+    provisions should be able to show all four. ``score`` is their max, kept
+    because the verdict math in ``services`` needs one number per category and
+    should not have to recompute it.
+    """
 
     category: ClauseCategory
     score: int
-    evidence: str | None = None
-    explanation: str | None = None
+    findings: list[Finding] = []
 
 
 class ChunkClassification(BaseModel):
@@ -53,41 +59,46 @@ class ChunkClassification(BaseModel):
     scores: list[ClauseScore]
 
 
-def dedupe(findings: list[Finding]) -> list[Finding]:
-    """Collapse repeated categories to the highest-scoring finding.
+def drop_duplicate_findings(findings: list[Finding]) -> list[Finding]:
+    """Remove byte-identical repeats, preserving order.
 
-    A chunk can address the same category in more than one paragraph. Taking
-    the max here mirrors the max-across-chunks reduction ``services`` applies
-    one level up.
+    A chunk addressing the same category in two paragraphs is real and both
+    findings are kept. Two findings identical in every field are not two
+    clauses — they are the model emitting the same one twice.
     """
-    best: dict[ClauseCategory, Finding] = {}
+    seen: set[tuple[str, str, int, str]] = set()
+    unique: list[Finding] = []
     for finding in findings:
-        current = best.get(finding.category)
-        if current is None or finding.score > current.score:
-            best[finding.category] = finding
-    return list(best.values())
+        key = (finding.category.value, finding.evidence, finding.score, finding.explanation)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    return unique
 
 
 def densify(findings: list[Finding]) -> ChunkClassification:
     """Expand sparse findings to one ``ClauseScore`` per category.
 
-    Categories the model did not report score ``SCORE_ABSENT`` with no evidence
-    and no explanation. Output is always in ``ClauseCategory`` declaration
-    order so downstream consumers can rely on it.
+    Every finding survives — a category found three times keeps all three, in
+    the order the model reported them. ``score`` is their max; categories the
+    model did not report score ``SCORE_ABSENT`` with an empty findings list.
+    Output is always in ``ClauseCategory`` declaration order so downstream
+    consumers can rely on it.
     """
-    by_category = {finding.category: finding for finding in dedupe(findings)}
-    scores: list[ClauseScore] = []
-    for category in ClauseCategory:
-        found = by_category.get(category)
-        if found is None:
-            scores.append(ClauseScore(category=category, score=SCORE_ABSENT))
-        else:
-            scores.append(
-                ClauseScore(
-                    category=category,
-                    score=found.score,
-                    evidence=found.evidence,
-                    explanation=found.explanation,
-                )
+    by_category: dict[ClauseCategory, list[Finding]] = {c: [] for c in ClauseCategory}
+    for finding in drop_duplicate_findings(findings):
+        by_category[finding.category].append(finding)
+
+    return ChunkClassification(
+        scores=[
+            ClauseScore(
+                category=category,
+                score=max(
+                    (f.score for f in by_category[category]), default=SCORE_ABSENT
+                ),
+                findings=by_category[category],
             )
-    return ChunkClassification(scores=scores)
+            for category in ClauseCategory
+        ]
+    )
