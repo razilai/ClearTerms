@@ -80,13 +80,31 @@ class ChunkFindings(BaseModel):
 class ClauseScore(BaseModel):
     """One category after densifying. Agent-facing schema."""
     category: ClauseCategory
-    score: int             # 0..2
-    evidence: str | None   # None if and only if score == 0
-    explanation: str | None
+    score: int              # 0..2, the max across findings
+    findings: list[Finding] # every clause found; empty if and only if score == 0
 
 class ChunkClassification(BaseModel):
     scores: list[ClauseScore]   # always six, in ClauseCategory declaration order
 ```
+
+### Every finding is kept (amended 2026-08-04)
+
+An earlier revision of this design collapsed each category to its
+highest-scoring finding. It no longer does: a TOS with four separate predatory
+arbitration provisions keeps all four, in the order the model reported them,
+and `score` is their max.
+
+The collapse discarded information the model had already produced, for no
+saving — the findings are generated either way. `score` is retained alongside
+the list because the verdict math in `preferences.py` needs one number per
+category and should not have to recompute it in every consumer.
+
+This is currently wider than the storage can hold. `Analysis` has one row per
+`(document_id, category, model_version)` with a single `score` and a single
+`explanation` column, so `services` still collapses on the way to the database.
+The agent is deliberately no longer the component that destroys the detail:
+when the team adds a JSON column (or a `Finding` table), the data is already
+there. Until then the extra findings are dropped one layer up, not here.
 
 ### Sparse model output
 
@@ -214,7 +232,9 @@ same document must not score differently across runs.
 
 An output validator runs in this order:
 
-1. **Dedupe** — if a category appears more than once, keep the highest score.
+1. **Drop duplicates** — remove findings identical in every field, preserving
+   order. Two findings differing anywhere are two real clauses and both are
+   kept; two byte-identical findings are the model emitting one clause twice.
 2. **Normalize** — collapse whitespace runs, map `“”‘’` to `"` and `'`, casefold.
    Applied to both the evidence and the chunk before comparison.
 3. **Substring check** — normalized evidence must appear in the normalized chunk.
@@ -233,25 +253,48 @@ document is cacheable. The cost ceiling is two forward passes per chunk.
 
 ## Testing
 
-`FunctionModel` with `Agent.override()` — no Ollama process in unit tests.
+Unit tests use no model at all — the pure transforms carry the logic, and the
+agent wiring is covered by construction tests only.
 
 - Densify always returns six entries in `ClauseCategory` declaration order.
 - `Literal[1, 2]` rejects a score of 0 in model output.
 - Normalization accepts curly quotes and a folded line break.
 - Retry fires once, then the finding is dropped and the rest survive.
-- Duplicate categories dedupe to the highest score.
-- `evidence` is non-None exactly when `score > 0`.
+- A category reported twice keeps both findings, in order, with `score` as their max.
+- Byte-identical findings collapse to one.
+- `findings` is non-empty exactly when `score > 0`.
 - The rendered system prompt contains all six category slugs.
 
-An integration test hitting a live Ollama is out of scope for `tests/unit.py`
-and belongs in `tests/integration.py`.
+Anything that depends on what a real model does lives in
+`tests/integration.py`, which skips itself when Ollama is unreachable or the
+configured model is not pulled. Those tests must be run from `backend/` with
+`-c pyproject.toml`; naming a path outside `backend/` makes pytest pick the
+repo root as rootdir and silently discard this project's pytest config.
 
-## Open implementation details
+## Resolved implementation details
 
-Neither blocks the design; both are settled while writing the code.
+- `OllamaProvider` passes `base_url` straight to `AsyncOpenAI` with no path
+  manipulation, so it must carry an explicit `/v1` suffix.
+- `Literal[1, 2]` survives the round trip. Pydantic renders it as
+  `"score": {"enum": [1, 2], "type": "integer"}` and Ollama honours it —
+  verified against `qwen3:4b` by `test_findings_never_carry_a_zero_score`. No
+  widening to a plain `int` with a Pydantic-side constraint is needed.
+- Pydantic emits `$defs`/`$ref` in the generated schema despite the flatness
+  goal above, and Ollama handled it without trouble on `qwen3:4b`. Left as-is;
+  if a future model mishandles it, inline the schema before sending.
 
-- Whether `OllamaProvider` expects `settings.ollama_base_url` with or without a
-  `/v1` suffix.
-- Whether `NativeOutput` round-trips `Literal[1, 2]` cleanly through Ollama's
-  schema handling, or whether it needs to be widened to a plain `int` with a
-  Pydantic-side constraint.
+## Model
+
+`settings.agent_model` is `qwen3:4b` for local development — chosen to fit an
+8 GB laptop, not for quality. Production runs on a GPU VM and should use a
+larger model.
+
+`settings.model_version` must be changed whenever `agent_model` or the prompt
+changes. It is part of the analysis cache key, and overriding the model without
+bumping it writes one model's scores into cache entries another model's scores
+are later served from.
+
+qwen3 is a hybrid reasoning model and thinking is on by default. Ollama returns
+it in a separate `reasoning` field, so it does not corrupt the constrained JSON
+output, but it costs latency. `chat_template_kwargs: {enable_thinking: false}`
+was tested against Ollama's OpenAI-compatible endpoint and had no effect.

@@ -10,8 +10,6 @@ from pydantic_ai import Agent, ModelRetry
 from app.agent import classifier
 from app.agent.categories import (
     CATEGORY_SPECS,
-    MAX_SCORE,
-    MIN_SCORE,
     SCORE_ABSENT,
     SCORE_SCALE,
     ClauseCategory,
@@ -32,8 +30,8 @@ from app.agent.output import (
     ChunkFindings,
     ClauseScore,
     Finding,
-    dedupe,
     densify,
+    drop_duplicate_findings,
 )
 
 # Frozen on purpose: these strings are stored in Analysis.category and
@@ -124,11 +122,10 @@ def test_chunk_findings_accepts_an_empty_list() -> None:
 
 def test_clause_score_allows_absent_category() -> None:
     absent = ClauseScore(category=ClauseCategory.LIABILITY, score=0)
-    assert absent.evidence is None
-    assert absent.explanation is None
+    assert absent.findings == []
 
 
-# --- app.agent.output: dedupe and densify --------------------------------
+# --- app.agent.output: densify and duplicate handling ---------------------
 
 
 def _finding(category: ClauseCategory, score: int = 2) -> Finding:
@@ -145,19 +142,20 @@ def test_densify_returns_every_category_in_enum_order() -> None:
     assert [s.category for s in result.scores] == list(ClauseCategory)
 
 
-def test_densify_fills_absent_categories_with_zero_and_no_evidence() -> None:
+def test_densify_fills_absent_categories_with_zero_and_no_findings() -> None:
     result = densify([_finding(ClauseCategory.ARBITRATION)])
     absent = [s for s in result.scores if s.category is not ClauseCategory.ARBITRATION]
     assert all(s.score == SCORE_ABSENT for s in absent)
-    assert all(s.evidence is None and s.explanation is None for s in absent)
+    assert all(s.findings == [] for s in absent)
 
 
 def test_densify_preserves_reported_findings() -> None:
     result = densify([_finding(ClauseCategory.LIABILITY, score=1)])
     liability = next(s for s in result.scores if s.category is ClauseCategory.LIABILITY)
     assert liability.score == 1
-    assert liability.evidence == "evidence for liability"
-    assert liability.explanation == "explanation for liability"
+    assert len(liability.findings) == 1
+    assert liability.findings[0].evidence == "evidence for liability"
+    assert liability.findings[0].explanation == "explanation for liability"
 
 
 def test_densify_of_nothing_is_six_zeros() -> None:
@@ -166,30 +164,89 @@ def test_densify_of_nothing_is_six_zeros() -> None:
     assert all(s.score == SCORE_ABSENT for s in result.scores)
 
 
-def test_evidence_is_present_exactly_when_score_is_nonzero() -> None:
+def test_findings_are_present_exactly_when_score_is_nonzero() -> None:
     result = densify([_finding(ClauseCategory.TERMINATION, score=1)])
     for score in result.scores:
-        assert (score.evidence is not None) == (score.score > SCORE_ABSENT)
+        assert bool(score.findings) == (score.score > SCORE_ABSENT)
 
 
-def test_dedupe_keeps_the_highest_score_per_category() -> None:
+def test_densify_keeps_every_finding_for_a_category() -> None:
+    """Four predatory arbitration clauses must not collapse into one."""
     findings = [
-        _finding(ClauseCategory.ARBITRATION, score=1),
-        _finding(ClauseCategory.ARBITRATION, score=2),
+        Finding(
+            category=ClauseCategory.ARBITRATION,
+            evidence="You waive any right to a jury trial.",
+            score=2,
+            explanation="Jury waiver.",
+        ),
+        Finding(
+            category=ClauseCategory.ARBITRATION,
+            evidence="Claims must be filed within 30 days.",
+            score=1,
+            explanation="Shortened but stated deadline.",
+        ),
     ]
-    deduped = dedupe(findings)
-    assert len(deduped) == 1
-    assert deduped[0].score == 2
+    result = densify(findings)
+    arbitration = next(
+        s for s in result.scores if s.category is ClauseCategory.ARBITRATION
+    )
+    assert len(arbitration.findings) == 2
+    assert [f.score for f in arbitration.findings] == [2, 1]
 
 
-def test_densify_dedupes_before_expanding() -> None:
+def test_densify_preserves_the_order_the_model_reported() -> None:
     findings = [
-        _finding(ClauseCategory.DATA_COLLECTION, score=2),
+        Finding(
+            category=ClauseCategory.LIABILITY,
+            evidence="first clause",
+            score=1,
+            explanation="a",
+        ),
+        Finding(
+            category=ClauseCategory.LIABILITY,
+            evidence="second clause",
+            score=2,
+            explanation="b",
+        ),
+    ]
+    result = densify(findings)
+    liability = next(s for s in result.scores if s.category is ClauseCategory.LIABILITY)
+    assert [f.evidence for f in liability.findings] == ["first clause", "second clause"]
+
+
+def test_category_score_is_the_max_of_its_findings() -> None:
+    findings = [
         _finding(ClauseCategory.DATA_COLLECTION, score=1),
+        _finding(ClauseCategory.DATA_COLLECTION, score=2),
     ]
     result = densify(findings)
     data = next(s for s in result.scores if s.category is ClauseCategory.DATA_COLLECTION)
     assert data.score == 2
+    assert len(data.findings) == 2
+
+
+def test_drop_duplicate_findings_removes_byte_identical_repeats() -> None:
+    """Two identical findings are the model stuttering, not two clauses."""
+    findings = [_finding(ClauseCategory.ARBITRATION), _finding(ClauseCategory.ARBITRATION)]
+    assert len(drop_duplicate_findings(findings)) == 1
+
+
+def test_drop_duplicate_findings_keeps_findings_differing_in_any_field() -> None:
+    findings = [
+        Finding(
+            category=ClauseCategory.ARBITRATION,
+            evidence="same quote",
+            score=1,
+            explanation="a",
+        ),
+        Finding(
+            category=ClauseCategory.ARBITRATION,
+            evidence="same quote",
+            score=2,
+            explanation="a",
+        ),
+    ]
+    assert len(drop_duplicate_findings(findings)) == 2
 
 
 # --- app.agent.evidence --------------------------------------------------
@@ -399,7 +456,7 @@ def test_dropped_findings_densify_to_zero() -> None:
         s for s in result.scores if s.category is ClauseCategory.ARBITRATION
     )
     assert arbitration.score == SCORE_ABSENT
-    assert arbitration.evidence is None
+    assert arbitration.findings == []
 
 
 # --- app.agent.classifier: agent wiring ----------------------------------
