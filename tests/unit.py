@@ -11,8 +11,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.repos import documents, users
-from app.models import Analysis
+from app.db.repos import documents, preferences, users
+from app.models import Analysis, Preference
+from app.schemas.preferences import PreferenceItem
 from app.services import auth
 from app.services.exceptions import InvalidTokenError
 
@@ -284,3 +285,96 @@ async def test_get_document_with_analyses_missing_returns_none(
     doc = await documents.create(session, "hash-a", None, "normalized text")
 
     assert await documents.get_document_with_analyses(session, doc.id + 1000) is None
+
+
+# --- preferences repo -------------------------------------------------------
+#
+# Preference.user_id is a real FK, so these create actual users rather than
+# inventing ids: the tests stay valid if FK enforcement is ever switched on.
+
+
+def _preference(user_id: int, category: str, weight: float = 1.0) -> Preference:
+    return Preference(user_id=user_id, category=category, weight=weight)
+
+
+def _items(*pairs: tuple[str, float]) -> list[PreferenceItem]:
+    return [PreferenceItem(category=c, weight=w) for c, w in pairs]
+
+
+async def test_get_for_user_returns_only_that_users_preferences(
+    session: AsyncSession,
+) -> None:
+    alice = await users.create(session, "ada@example.com", "pw1")
+    bob = await users.create(session, "bob@example.com", "pw2")
+    await preferences.replace_for_user(
+        session, alice.id, _items(("arbitration", 1.0), ("liability", 0.5))
+    )
+    await preferences.replace_for_user(
+        session, bob.id, _items(("data_collection", 2.0))
+    )
+
+    found = await preferences.get_for_user(session, alice.id)
+    assert {(p.category, p.weight) for p in found} == {
+        ("arbitration", 1.0),
+        ("liability", 0.5),
+    }
+    assert all(p.user_id == alice.id for p in found)
+
+
+async def test_get_for_user_returns_empty_list_when_none(session: AsyncSession) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+
+    assert await preferences.get_for_user(session, user.id) == []
+
+
+async def test_replace_for_user_sets_initial_preferences(session: AsyncSession) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+
+    returned = await preferences.replace_for_user(
+        session, user.id, _items(("arbitration", 1.0), ("liability", 0.5))
+    )
+    assert {(p.category, p.weight) for p in returned} == {
+        ("arbitration", 1.0),
+        ("liability", 0.5),
+    }
+
+    found = await preferences.get_for_user(session, user.id)
+    assert {(p.category, p.weight) for p in found} == {
+        ("arbitration", 1.0),
+        ("liability", 0.5),
+    }
+
+
+async def test_replace_for_user_wipes_previous_set(session: AsyncSession) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+    other = await users.create(session, "bob@example.com", "pw2")
+    await preferences.replace_for_user(
+        session, user.id, _items(("arbitration", 1.0), ("liability", 0.5))
+    )
+    await preferences.replace_for_user(session, other.id, _items(("arbitration", 9.0)))
+
+    await preferences.replace_for_user(
+        session, user.id, _items(("data_collection", 2.0), ("termination", 1.5))
+    )
+
+    found = await preferences.get_for_user(session, user.id)
+    assert {(p.category, p.weight) for p in found} == {
+        ("data_collection", 2.0),
+        ("termination", 1.5),
+    }
+    # The replaced categories are gone entirely, not merely re-weighted.
+    assert {p.category for p in found}.isdisjoint({"arbitration", "liability"})
+    # The wipe is scoped to one user: bob keeps his own "arbitration" row.
+    other_found = await preferences.get_for_user(session, other.id)
+    assert {(p.category, p.weight) for p in other_found} == {("arbitration", 9.0)}
+
+
+async def test_duplicate_category_for_user_raises(session: AsyncSession) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+    await preferences.replace_for_user(session, user.id, _items(("arbitration", 1.0)))
+
+    # Added directly rather than through the repo: this pins the DB constraint
+    # itself, leaving replace_for_user free to dedupe its own input if it wants.
+    session.add(_preference(user.id, "arbitration", weight=2.0))
+    with pytest.raises(IntegrityError):
+        await session.flush()
