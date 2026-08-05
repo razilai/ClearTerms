@@ -1,30 +1,58 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Analysis, Document
 
 
 async def get_by_hash(session: AsyncSession, text_hash: str) -> Document | None:
-    raise NotImplementedError
+    result = await session.execute(
+        select(Document).where(Document.text_hash == text_hash)
+    )
+    return result.scalar_one_or_none()
 
 
 async def create(
     session: AsyncSession, text_hash: str, url: str | None, normalized_text: str
 ) -> Document:
-    raise NotImplementedError
+    document = Document(text_hash=text_hash, url=url, normalized_text=normalized_text)
+    session.add(document)
+    # Flush, don't commit: the caller owns the transaction boundary. This
+    # populates document.id and surfaces the unique-text_hash violation here.
+    await session.flush()
+    return document
 
 
 async def get_analyses(
     session: AsyncSession, document_id: int, model_version: str
 ) -> list[Analysis]:
-    raise NotImplementedError
+    result = await session.execute(
+        select(Analysis).where(
+            Analysis.document_id == document_id,
+            Analysis.model_version == model_version,
+        )
+    )
+    return list(result.scalars().all())
 
 
 async def save_analyses(session: AsyncSession, analyses: list[Analysis]) -> None:
     """Persist prepared Analysis rows (services build them from agent output)."""
-    raise NotImplementedError
+    session.add_all(analyses)
+    # Flush so a composite-unique violation surfaces here rather than at the
+    # caller's commit, far from the code that built these rows.
+    await session.flush()
 
 
 async def get_document_with_analyses(
     session: AsyncSession, document_id: int
 ) -> tuple[Document, list[Analysis]] | None:
-    raise NotImplementedError
+    result = await session.execute(select(Document).where(Document.id == document_id))
+    document = result.scalar_one_or_none()
+    if document is None:
+        return None
+
+    # No model_version filter: this is the detail view, which shows everything
+    # stored for the document.
+    analyses = await session.execute(
+        select(Analysis).where(Analysis.document_id == document_id)
+    )
+    return document, list(analyses.scalars().all())
