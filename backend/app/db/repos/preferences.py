@@ -11,7 +11,9 @@ async def get_for_user(session: AsyncSession, user_id: int) -> list[Preference]:
     )
     return list(result.scalars().all())
 
-
+# NOTE: empty `items` clears all of the user's preferences.
+# NOTE: duplicate categories within `items` raise IntegrityError (no dedupe) —
+#       the preferences service must ensure no duplicate categories are passed.
 async def replace_for_user(
     session: AsyncSession, user_id: int, items: list[PreferenceItem]
 ) -> list[Preference]:
