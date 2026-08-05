@@ -11,8 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.repos import documents, preferences, users
-from app.models import Analysis, Preference
+from app.db.repos import documents, history, preferences, users
+from app.models import Analysis, Document, Preference, User
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
 from app.services.exceptions import InvalidTokenError
@@ -378,3 +378,73 @@ async def test_duplicate_category_for_user_raises(session: AsyncSession) -> None
     session.add(_preference(user.id, "arbitration", weight=2.0))
     with pytest.raises(IntegrityError):
         await session.flush()
+
+
+# --- history repo -----------------------------------------------------------
+
+
+async def _user_and_document(
+    session: AsyncSession,
+    email: str = "ada@example.com",
+    text_hash: str = "hash-a",
+) -> tuple[User, Document]:
+    """Real rows for HistoryEntry's two FKs."""
+    user = await users.create(session, email, "pw1")
+    document = await documents.create(session, text_hash, None, "normalized text")
+    return user, document
+
+
+async def test_append_creates_entry(session: AsyncSession) -> None:
+    user, doc = await _user_and_document(session)
+
+    entry = await history.append(session, user.id, doc.id, "down")
+
+    assert entry.id is not None, "flush should populate the PK"
+    assert entry.user_id == user.id
+    assert entry.document_id == doc.id
+    assert entry.verdict == "down"
+
+
+async def test_list_for_user_returns_only_that_users_entries(
+    session: AsyncSession,
+) -> None:
+    alice = await users.create(session, "ada@example.com", "pw1")
+    bob = await users.create(session, "bob@example.com", "pw2")
+    doc = await documents.create(session, "hash-a", None, "normalized text")
+
+    first = await history.append(session, alice.id, doc.id, "down")
+    second = await history.append(session, alice.id, doc.id, "up")
+    await history.append(session, bob.id, doc.id, "up")
+
+    found = await history.list_for_user(session, alice.id)
+    assert {e.id for e in found} == {first.id, second.id}
+    assert all(e.user_id == alice.id for e in found)
+
+
+async def test_list_for_user_returns_empty_list_when_none(
+    session: AsyncSession,
+) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+
+    assert await history.list_for_user(session, user.id) == []
+
+
+async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
+    user, doc = await _user_and_document(session)
+    middle = await history.append(session, user.id, doc.id, "down")
+    newest = await history.append(session, user.id, doc.id, "up")
+    oldest = await history.append(session, user.id, doc.id, "down")
+
+    # created_at is a server_default of CURRENT_TIMESTAMP, which SQLite resolves
+    # to whole seconds — rows appended in one test would otherwise share a
+    # timestamp and leave the ordering undefined. Assigning explicitly also puts
+    # created_at order deliberately out of step with insertion order, so this
+    # pins ordering by created_at rather than by id.
+    base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    oldest.created_at = base
+    middle.created_at = base + timedelta(minutes=5)
+    newest.created_at = base + timedelta(minutes=10)
+    await session.flush()
+
+    found = await history.list_for_user(session, user.id)
+    assert [e.id for e in found] == [newest.id, middle.id, oldest.id]
