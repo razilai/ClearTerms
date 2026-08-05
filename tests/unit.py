@@ -11,7 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.repos import users
+from app.db.repos import documents, users
+from app.models import Analysis
 from app.services import auth
 from app.services.exceptions import InvalidTokenError
 
@@ -149,3 +150,137 @@ async def test_create_multiple_users(session: AsyncSession) -> None:
     assert u1.id != u2.id
     assert await users.get_by_email(session, "ada@example.com") is not None
     assert await users.get_by_email(session, "bob@example.com") is not None
+
+
+# --- documents repo ---------------------------------------------------------
+#
+# Category slugs are plain String(64) with no FK, so these use literals rather
+# than importing the taxonomy: what is under test is filtering and constraints,
+# not the label set.
+
+MODEL_V1 = "test-model-v1"
+MODEL_V2 = "test-model-v2"
+
+
+def _analysis(
+    document_id: int,
+    category: str,
+    *,
+    score: int = 1,
+    model_version: str = MODEL_V1,
+    explanation: str | None = None,
+) -> Analysis:
+    return Analysis(
+        document_id=document_id,
+        category=category,
+        score=score,
+        model_version=model_version,
+        explanation=explanation,
+    )
+
+
+async def test_get_by_hash_returns_document(session: AsyncSession) -> None:
+    created = await documents.create(
+        session, "hash-a", "https://example.test/tos", "normalized text"
+    )
+
+    found = await documents.get_by_hash(session, "hash-a")
+    assert found is not None
+    assert found.id == created.id
+    assert found.url == "https://example.test/tos"
+    assert found.normalized_text == "normalized text"
+
+
+async def test_get_by_hash_returns_none_when_absent(session: AsyncSession) -> None:
+    await documents.create(session, "hash-a", None, "normalized text")
+
+    assert await documents.get_by_hash(session, "hash-missing") is None
+
+
+async def test_create_document_populates_id(session: AsyncSession) -> None:
+    doc = await documents.create(session, "hash-a", None, "normalized text")
+
+    assert doc.id is not None, "flush should populate the PK"
+
+
+async def test_create_document_duplicate_hash_raises(session: AsyncSession) -> None:
+    await documents.create(session, "hash-a", None, "normalized text")
+
+    with pytest.raises(IntegrityError):
+        await documents.create(session, "hash-a", None, "different text")
+
+
+async def test_save_and_get_analyses_round_trip(session: AsyncSession) -> None:
+    doc = await documents.create(session, "hash-a", None, "normalized text")
+    other = await documents.create(session, "hash-b", None, "other text")
+    await documents.save_analyses(
+        session,
+        [
+            _analysis(
+                doc.id, "arbitration", score=2, explanation="binding arbitration"
+            ),
+            _analysis(doc.id, "data_collection", score=1),
+            # Belongs to a different document; must not leak into doc's results.
+            _analysis(other.id, "liability", score=2),
+        ],
+    )
+
+    found = await documents.get_analyses(session, doc.id, MODEL_V1)
+    assert {(a.category, a.score) for a in found} == {
+        ("arbitration", 2),
+        ("data_collection", 1),
+    }
+    assert all(a.document_id == doc.id for a in found)
+    arbitration = next(a for a in found if a.category == "arbitration")
+    assert arbitration.explanation == "binding arbitration"
+
+
+async def test_get_analyses_filters_by_model_version(session: AsyncSession) -> None:
+    doc = await documents.create(session, "hash-a", None, "normalized text")
+    await documents.save_analyses(
+        session,
+        [
+            _analysis(doc.id, "arbitration", score=2, model_version=MODEL_V1),
+            _analysis(doc.id, "arbitration", score=0, model_version=MODEL_V2),
+        ],
+    )
+
+    found = await documents.get_analyses(session, doc.id, MODEL_V1)
+    assert [(a.model_version, a.score) for a in found] == [(MODEL_V1, 2)]
+
+
+async def test_duplicate_analysis_raises(session: AsyncSession) -> None:
+    doc = await documents.create(session, "hash-a", None, "normalized text")
+    await documents.save_analyses(session, [_analysis(doc.id, "arbitration")])
+
+    # Same (document_id, category, model_version) violates the composite unique.
+    with pytest.raises(IntegrityError):
+        await documents.save_analyses(session, [_analysis(doc.id, "arbitration")])
+
+
+async def test_get_document_with_analyses(session: AsyncSession) -> None:
+    doc = await documents.create(
+        session, "hash-a", "https://example.test/tos", "normalized text"
+    )
+    await documents.save_analyses(
+        session,
+        [
+            _analysis(doc.id, "arbitration", score=2),
+            _analysis(doc.id, "liability", score=1),
+        ],
+    )
+
+    result = await documents.get_document_with_analyses(session, doc.id)
+    assert result is not None
+    found_doc, found_analyses = result
+    assert found_doc.id == doc.id
+    assert found_doc.text_hash == "hash-a"
+    assert {a.category for a in found_analyses} == {"arbitration", "liability"}
+
+
+async def test_get_document_with_analyses_missing_returns_none(
+    session: AsyncSession,
+) -> None:
+    doc = await documents.create(session, "hash-a", None, "normalized text")
+
+    assert await documents.get_document_with_analyses(session, doc.id + 1000) is None
