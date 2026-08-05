@@ -17,7 +17,8 @@ async def init_db() -> None:
     from app.models.base import Base
 
     async with engine.begin() as conn:
-        await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        if engine.dialect.name == "sqlite":
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
         await conn.run_sync(Base.metadata.create_all)
 
 
