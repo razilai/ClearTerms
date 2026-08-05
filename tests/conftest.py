@@ -4,58 +4,17 @@ Run from backend/ so the editable install resolves `app`:
 
     uv run --project backend pytest
 
-The DB layer is not implemented yet; tests/fakes.py patches app.db.repos with
-in-memory fakes and the session dependency yields None (unused by fakes).
-When the real DB lands, swap these for an in-memory SQLite engine + session
-override; the endpoint tests themselves stay valid.
-Fixtures to add as implementation lands: session override for
-app.db.engine.get_session, httpx.AsyncClient against app.main.app, and a
-monkeypatched app.agent.classifier.classify_chunk.
+Tests run against a real in-memory SQLite database (aiosqlite), not fakes.
+The `session` fixture builds a fresh schema per test; the `client` fixture
+overrides `app.db.engine.get_session` to hand every request that same session,
+so writes a request flushes stay visible to later requests in the test without
+needing a commit (the app's repos flush; the request transaction boundary is
+not wired yet).
 """
 
 from collections.abc import AsyncIterator
 
 import httpx
-import pytest
-
-from tests.fakes import FakeStore, install
-
-
-@pytest.fixture
-def store(monkeypatch: pytest.MonkeyPatch) -> FakeStore:
-    s = FakeStore()
-    install(monkeypatch, s)
-    return s
-
-
-@pytest.fixture
-async def client(store: FakeStore) -> AsyncIterator[httpx.AsyncClient]:
-    from app.db.engine import get_session
-    from app.main import app
-
-    async def _null_session() -> AsyncIterator[None]:
-        yield None
-
-    app.dependency_overrides[get_session] = _null_session
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    app.dependency_overrides.clear()
-
-
-async def signup_headers(
-    client: httpx.AsyncClient, email: str, password: str = "hunter2!"
-) -> dict[str, str]:
-    resp = await client.post(
-        "/auth/signup", json={"email": email, "password": password}
-    )
-    assert resp.status_code == 201, resp.text
-    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
-
-
-@pytest.fixture
-async def auth_headers(client: httpx.AsyncClient) -> dict[str, str]:
-    return await signup_headers(client, "alice@example.com")
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -87,3 +46,33 @@ async def session() -> AsyncIterator[AsyncSession]:
             yield session
     finally:
         await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def client(session: AsyncSession) -> AsyncIterator[httpx.AsyncClient]:
+    from app.db.engine import get_session
+    from app.main import app
+
+    async def _override_get_session() -> AsyncIterator[AsyncSession]:
+        yield session
+
+    app.dependency_overrides[get_session] = _override_get_session
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+async def signup_headers(
+    client: httpx.AsyncClient, email: str, password: str = "hunter2!"
+) -> dict[str, str]:
+    resp = await client.post(
+        "/auth/signup", json={"email": email, "password": password}
+    )
+    assert resp.status_code == 201, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+@pytest_asyncio.fixture
+async def auth_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    return await signup_headers(client, "alice@example.com")

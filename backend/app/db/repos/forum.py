@@ -3,6 +3,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Comment, Like, Post
@@ -10,78 +11,117 @@ from app.schemas.forum import PostCreate
 
 
 async def create_post(session: AsyncSession, user_id: int, data: PostCreate) -> Post:
-    # TODO(db): INSERT and return the row with generated id/created_at.
-    raise NotImplementedError
+    post = Post(
+        user_id=user_id,
+        document_id=data.document_id,
+        category=data.category,
+        title=data.title,
+        body=data.body,
+    )
+    session.add(post)
+    # Flush, don't commit: the caller owns the transaction boundary. This
+    # populates post.id and created_at (server default).
+    await session.flush()
+    return post
 
 
 async def get_post(session: AsyncSession, post_id: int) -> Post | None:
-    # TODO(db): SELECT by primary key.
-    raise NotImplementedError
+    return await session.get(Post, post_id)
 
 
 async def list_posts(session: AsyncSession) -> list[Post]:
-    # TODO(db): SELECT ordered by created_at DESC.
-    raise NotImplementedError
+    result = await session.execute(select(Post).order_by(Post.created_at.desc()))
+    return list(result.scalars().all())
 
 
 async def delete_post(session: AsyncSession, post_id: int) -> None:
-    # TODO(db): DELETE; must cascade the post's comments and likes.
-    raise NotImplementedError
+    # No DB-level cascade on the FKs, so clear children first to avoid dangling
+    # rows / FK violations.
+    await session.execute(delete(Like).where(Like.post_id == post_id))
+    await session.execute(delete(Comment).where(Comment.post_id == post_id))
+    await session.execute(delete(Post).where(Post.id == post_id))
+    await session.flush()
 
 
 async def create_comment(
     session: AsyncSession, post_id: int, user_id: int, body: str
 ) -> Comment:
-    # TODO(db): INSERT and return the row with generated id/created_at.
-    raise NotImplementedError
+    comment = Comment(post_id=post_id, user_id=user_id, body=body)
+    session.add(comment)
+    await session.flush()
+    return comment
 
 
 async def get_comment(session: AsyncSession, comment_id: int) -> Comment | None:
-    # TODO(db): SELECT by primary key.
-    raise NotImplementedError
+    return await session.get(Comment, comment_id)
 
 
 async def list_comments(session: AsyncSession, post_id: int) -> list[Comment]:
-    # TODO(db): SELECT WHERE post_id ordered by created_at ASC.
-    raise NotImplementedError
+    result = await session.execute(
+        select(Comment)
+        .where(Comment.post_id == post_id)
+        .order_by(Comment.created_at.asc())
+    )
+    return list(result.scalars().all())
 
 
 async def update_comment(
     session: AsyncSession, comment_id: int, body: str, edited_at: datetime
 ) -> Comment:
-    # TODO(db): UPDATE body + edited_at, return the row.
-    raise NotImplementedError
+    comment = await session.get(Comment, comment_id)
+    if comment is None:
+        raise LookupError(f"comment {comment_id} not found")
+    comment.body = body
+    comment.edited_at = edited_at
+    await session.flush()
+    return comment
 
 
 async def delete_comment(session: AsyncSession, comment_id: int) -> None:
-    # TODO(db): DELETE by primary key.
-    raise NotImplementedError
+    await session.execute(delete(Comment).where(Comment.id == comment_id))
+    await session.flush()
 
 
 async def get_like(session: AsyncSession, user_id: int, post_id: int) -> Like | None:
-    # TODO(db): SELECT by the (user_id, post_id) unique pair.
-    raise NotImplementedError
+    result = await session.execute(
+        select(Like).where(Like.user_id == user_id, Like.post_id == post_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def add_like(session: AsyncSession, user_id: int, post_id: int) -> Like:
-    # TODO(db): INSERT; the UniqueConstraint(user_id, post_id) makes this
-    # idempotent-safe under races.
-    raise NotImplementedError
+    like = Like(user_id=user_id, post_id=post_id)
+    session.add(like)
+    # The UniqueConstraint(user_id, post_id) surfaces a double-like as an
+    # IntegrityError here rather than at the caller's commit.
+    await session.flush()
+    return like
 
 
 async def remove_like(session: AsyncSession, user_id: int, post_id: int) -> None:
-    # TODO(db): DELETE by the (user_id, post_id) pair.
-    raise NotImplementedError
+    await session.execute(
+        delete(Like).where(Like.user_id == user_id, Like.post_id == post_id)
+    )
+    await session.flush()
 
 
 async def count_likes(session: AsyncSession, post_id: int) -> int:
-    # TODO(db): SELECT COUNT(*) WHERE post_id.
-    raise NotImplementedError
+    result = await session.execute(
+        select(func.count()).select_from(Like).where(Like.post_id == post_id)
+    )
+    return result.scalar_one()
 
 
 async def count_likes_by_post(
     session: AsyncSession, post_ids: Iterable[int]
 ) -> dict[int, int]:
     """Map post id -> like count; posts with no likes may be absent."""
-    # TODO(db): SELECT post_id, COUNT(*) GROUP BY post_id WHERE post_id IN (...).
-    raise NotImplementedError
+    ids = list(post_ids)
+    if not ids:
+        return {}
+    result = await session.execute(
+        select(Like.post_id, func.count())
+        .where(Like.post_id.in_(ids))
+        .group_by(Like.post_id)
+    )
+    return {post_id: count for post_id, count in result.all()}
