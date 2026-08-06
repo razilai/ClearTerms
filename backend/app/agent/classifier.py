@@ -23,8 +23,14 @@ from app.agent.categories import (
     ClauseCategory,
 )
 from app.agent.evidence import is_verbatim
-from app.agent.output import ChunkClassification, ChunkFindings, Finding, densify
+from app.agent.output import densify
 from app.core.config import settings
+from app.schemas.analysis import (
+    CategoryScore,
+    ChunkClassification,
+    ChunkFindings,
+    Finding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,5 +169,7 @@ async def classify_chunk(text: str) -> ChunkClassification:
     return densify(result.output.findings)
 
 
-async def analyze(text: str):
+# NOTE: This returns list of CategoryScores, which turns into AnalysisDetail only in services.
+#       This is because there is no need for the agent to accept url / id / etc as arguments. only text.
+async def analyze(text: str) -> list[CategoryScore]:
     raise NotImplementedError()

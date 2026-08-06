@@ -11,8 +11,8 @@ class AnalyzeRequest(BaseModel):
 
 
 class CategoryScore(BaseModel):
-    category: str
-    score: int
+    category: str  # TODO: should this be an enum?
+    score: int  # TODO: should this be limited to some score range?
     explanation: str | None = None
 
 
@@ -21,6 +21,9 @@ class VerdictResponse(BaseModel):
     analysis_id: int
 
 
+# NOTE: this is the final output of the analysis,
+# TODO: is ID redundant? it might be more relevant to the database models, but here we are just returning the analysis object
+#       did not remove this yet, but should be addressed
 class AnalysisDetail(BaseModel):
     id: int
     url: str | None

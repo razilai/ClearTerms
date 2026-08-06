@@ -47,9 +47,3 @@ def normalize_text(text: str) -> str:
 
 def compute_hash(normalized: str) -> str:
     raise NotImplementedError
-
-
-def chunk_text(cleaned: str) -> list[str]:
-    """Split by TOS section headings; fallback to settings.chunk_tokens windows
-    with settings.chunk_overlap_tokens overlap."""
-    raise NotImplementedError
