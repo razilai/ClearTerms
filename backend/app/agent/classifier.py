@@ -142,8 +142,12 @@ def build_agent() -> Agent[str, ChunkFindings]:
     )
 
     @agent.output_validator
-    def _validate_evidence(ctx: RunContext[str], output: ChunkFindings) -> ChunkFindings:
-        return ChunkFindings(findings=check_evidence(output.findings, ctx.deps, ctx.retry))
+    def _validate_evidence(
+        ctx: RunContext[str], output: ChunkFindings
+    ) -> ChunkFindings:
+        return ChunkFindings(
+            findings=check_evidence(output.findings, ctx.deps, ctx.retry)
+        )
 
     return agent
 
@@ -157,3 +161,8 @@ async def classify_chunk(text: str) -> ChunkClassification:
     """
     result = await build_agent().run(f"Excerpt:\n{text}", deps=text)
     return densify(result.output.findings)
+
+
+async def analyze(text: str):
+    chunks = self.chunk(text)
+    analyzed_chunks = [classify_chunk(chunk) for chunk in chunks]

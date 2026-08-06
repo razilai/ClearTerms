@@ -24,6 +24,11 @@ app.include_router(api_router)
 register_exception_handlers(app)
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"service": "ClearTerms", "docs": "/docs", "health": "/health"}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

@@ -8,11 +8,19 @@ development against live auth + forum endpoints. State resets on restart.
     uv run --project backend python tests/devserver.py
 """
 
+import os
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# The fakes handle all persistence, but the app's lifespan still runs init_db()
+# against the real engine. The default database_url is relative to CWD, so
+# running this from the repo root points it at a nonexistent <repo>/data/ dir
+# ("unable to open database file"). Force an in-memory db so startup is
+# CWD-independent and never touches disk.
+os.environ.setdefault("CLEARTERMS_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 import pytest
 import uvicorn
