@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, EmailStr, Field, SecretStr
@@ -16,3 +17,9 @@ class SignupRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class TokenPayload(BaseModel):
+    sub: int  # the JWT carries it as a string; pydantic coerces it back
+    iat: datetime
+    exp: datetime

@@ -4,12 +4,13 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 from pwdlib import PasswordHash
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.repos import users as users_repo
 from app.models import User
+from app.schemas.auth import TokenPayload
 from app.services.exceptions import (
     DuplicateEmailError,
     InvalidCredentialsError,
@@ -26,12 +27,6 @@ _DUMMY_HASH = _pwd.hash("dummy-password")
 
 # Tolerated clock skew between token issuer and verifier.
 _LEEWAY_SECONDS = 10
-
-
-class TokenPayload(BaseModel):
-    sub: int  # the JWT carries it as a string; pydantic coerces it back
-    iat: datetime
-    exp: datetime
 
 
 async def signup(session: AsyncSession, email: str, password: str) -> User:
