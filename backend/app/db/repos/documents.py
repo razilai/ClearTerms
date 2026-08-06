@@ -1,7 +1,19 @@
+from collections.abc import Iterable
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Analysis, Document
+
+
+async def get_urls(
+    session: AsyncSession, document_ids: Iterable[int]
+) -> dict[int, str | None]:
+    """Map document ids to their url; for the history list's per-entry join."""
+    result = await session.execute(
+        select(Document.id, Document.url).where(Document.id.in_(set(document_ids)))
+    )
+    return {id_: url for id_, url in result.all()}
 
 
 async def get_by_hash(session: AsyncSession, text_hash: str) -> Document | None:
