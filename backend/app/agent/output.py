@@ -16,47 +16,13 @@ model emits fields in schema order and cannot backtrack, so ``evidence`` comes
 before ``score``: quote the clause, then judge the quote.
 """
 
-from typing import Literal
-
-from pydantic import BaseModel
-
-from app.agent.categories import SCORE_ABSENT, ClauseCategory
-
-
-class Finding(BaseModel):
-    """One category the model found in a chunk. Model-facing schema."""
-
-    category: ClauseCategory
-    evidence: str
-    score: Literal[1, 2]
-    explanation: str
-
-
-class ChunkFindings(BaseModel):
-    """Raw model output: only the categories the chunk addresses."""
-
-    findings: list[Finding]
-
-
-class ClauseScore(BaseModel):
-    """One category after densifying. Agent-facing schema.
-
-    ``findings`` holds every clause the chunk contained for this category, not
-    just the worst one: a TOS with four separate predatory arbitration
-    provisions should be able to show all four. ``score`` is their max, kept
-    because the verdict math in ``services`` needs one number per category and
-    should not have to recompute it.
-    """
-
-    category: ClauseCategory
-    score: int
-    findings: list[Finding] = []
-
-
-class ChunkClassification(BaseModel):
-    """What ``classify_chunk`` returns: every category, always."""
-
-    scores: list[ClauseScore]
+from app.agent.categories import SCORE_ABSENT
+from app.schemas.analysis import (
+    ChunkClassification,
+    ClauseCategory,
+    ClauseScore,
+    Finding,
+)
 
 
 def drop_duplicate_findings(findings: list[Finding]) -> list[Finding]:
@@ -69,7 +35,12 @@ def drop_duplicate_findings(findings: list[Finding]) -> list[Finding]:
     seen: set[tuple[str, str, int, str]] = set()
     unique: list[Finding] = []
     for finding in findings:
-        key = (finding.category.value, finding.evidence, finding.score, finding.explanation)
+        key = (
+            finding.category.value,
+            finding.evidence,
+            finding.score,
+            finding.explanation,
+        )
         if key in seen:
             continue
         seen.add(key)

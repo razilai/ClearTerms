@@ -164,5 +164,4 @@ async def classify_chunk(text: str) -> ChunkClassification:
 
 
 async def analyze(text: str):
-    chunks = self.chunk(text)
-    analyzed_chunks = [classify_chunk(chunk) for chunk in chunks]
+    raise NotImplementedError()
