@@ -172,4 +172,15 @@ async def classify_chunk(text: str) -> ChunkClassification:
 # NOTE: This returns list of CategoryScores, which turns into AnalysisDetail only in services.
 #       This is because there is no need for the agent to accept url / id / etc as arguments. only text.
 async def analyze(text: str) -> list[CategoryScore]:
-    raise NotImplementedError()
+    # TODO: implement — clean, chunk (settings.chunk_tokens / chunk_overlap_tokens),
+    #       fan out to classify_chunk per chunk, take the per-category max across
+    #       chunks, and return one CategoryScore per ClauseCategory.
+    # Dummy scores for now so the pipeline (services -> db) runs end to end.
+    return [
+        CategoryScore(
+            category=category.value,
+            score=SCORE_STANDARD,
+            explanation=f"Placeholder score for {category.value}; agent not implemented.",
+        )
+        for category in ClauseCategory
+    ]

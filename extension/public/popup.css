@@ -1,0 +1,138 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1a1b1e;
+  --muted: #868e96;
+  --border: #e9ecef;
+  --accent: #1c7ed6;
+  --accent-fg: #ffffff;
+  --green: #2f9e44;
+  --yellow: #f08c00;
+  --red: #e03131;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.email {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.root {
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.status {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.btn-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.dot.green { background: var(--green); }
+.dot.yellow { background: var(--yellow); }
+.dot.red { background: var(--red); }
+
+.error {
+  color: var(--red);
+  margin: 0;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
