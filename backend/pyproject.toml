@@ -6,7 +6,9 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "sqlalchemy>=2.0",
+    # [asyncio] pulls greenlet: SQLAlchemy's async layer runs the sync driver
+    # inside a greenlet, so every await on a session raises without it.
+    "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
     "pydantic[email]>=2.0",
     "pydantic-settings>=2.0",

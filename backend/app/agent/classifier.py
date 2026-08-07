@@ -3,6 +3,7 @@
 Plain text in, structured scores out. No cache, db, or preference awareness.
 """
 
+import asyncio
 import json
 import logging
 import tomllib
@@ -22,13 +23,14 @@ from app.agent.categories import (
     SCORE_STANDARD,
     ClauseCategory,
 )
+from app.agent.chunking import split_document, tiktoken_counter
 from app.agent.evidence import is_verbatim
 from app.agent.output import densify
 from app.core.config import settings
 from app.schemas.analysis import (
-    CategoryScore,
     ChunkClassification,
     ChunkFindings,
+    ClauseScore,
     Finding,
 )
 
@@ -38,6 +40,10 @@ PROMPTS_PACKAGE = "app.agent.prompts"
 PROMPTS_FILE = "prompts.toml"
 
 MAX_EVIDENCE_RETRIES = 1
+
+# Ollama serialises requests past OLLAMA_NUM_PARALLEL, so a wider fan-out buys
+# nothing and just queues. Re-measure on the GPU VM and match it to that value.
+MAX_CONCURRENT_CHUNKS = 4
 
 
 @lru_cache
@@ -169,18 +175,53 @@ async def classify_chunk(text: str) -> ChunkClassification:
     return densify(result.output.findings)
 
 
-# NOTE: This returns list of CategoryScores, which turns into AnalysisDetail only in services.
-#       This is because there is no need for the agent to accept url / id / etc as arguments. only text.
-async def analyze(text: str) -> list[CategoryScore]:
-    # TODO: implement — clean, chunk (settings.chunk_tokens / chunk_overlap_tokens),
-    #       fan out to classify_chunk per chunk, take the per-category max across
-    #       chunks, and return one CategoryScore per ClauseCategory.
-    # Dummy scores for now so the pipeline (services -> db) runs end to end.
-    return [
-        CategoryScore(
-            category=category.value,
-            score=SCORE_STANDARD,
-            explanation=f"Placeholder score for {category.value}; agent not implemented.",
-        )
-        for category in ClauseCategory
+async def analyze(text: str) -> list[ClauseScore]:
+    """Classify a whole document: chunk it, score the chunks, merge the results.
+
+    The only entry point ``services`` needs. Takes plain text and returns one
+    score per category for the document as a whole.
+
+    Chunks are independent, so they run concurrently, bounded by a semaphore:
+    Ollama serialises requests beyond ``OLLAMA_NUM_PARALLEL`` anyway, and an
+    unbounded fan-out on a long document would queue hundreds of them.
+
+    Merging is just ``densify`` again over the pooled findings. That gives the
+    per-category max across chunks for free, drops findings repeated verbatim
+    in two chunks, and restores the all-six-categories guarantee.
+    """
+    chunks = split_document(
+        text, count_tokens=tiktoken_counter(), max_tokens=settings.chunk_tokens
+    )
+    limit = asyncio.Semaphore(MAX_CONCURRENT_CHUNKS)
+
+    async def classify(chunk: str) -> ChunkClassification:
+        async with limit:
+            return await classify_chunk(chunk)
+
+    classified = await asyncio.gather(*(classify(chunk) for chunk in chunks))
+    pooled = [
+        finding
+        for result in classified
+        for score in result.scores
+        for finding in score.findings
     ]
+    return densify(pooled).scores
+
+    # TODO: services wants list[CategoryScore] — one `explanation` string per
+    # category — but a ClauseScore holds a list of Findings, each with its own
+    # evidence and explanation. Collapsing them is lossy and the shape is not
+    # settled yet, so it is deliberately not done here. Once decided, the
+    # conversion is roughly:
+    #
+    #     return [
+    #         CategoryScore(
+    #             category=score.category.value,
+    #             score=score.score,
+    #             explanation=" ".join(f.explanation for f in score.findings) or None,
+    #         )
+    #         for score in densify(pooled).scores
+    #     ]
+    #
+    # Joining is the cheapest option and keeps every explanation, but discards
+    # the evidence spans entirely. Storing findings properly (a JSON column on
+    # Analysis, or a Finding table) is the alternative — see docs/superpowers.
