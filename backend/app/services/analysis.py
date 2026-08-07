@@ -39,7 +39,9 @@ async def analyze(
 
     document = await documents_repo.get_by_hash(session, text_hash)
     if document is None:
-        document = await documents_repo.create(session, text_hash, url, normalized)
+        document = await documents_repo.create(
+            session, text_hash, url, normalized, original_text=text
+        )
 
     # Cache is keyed by (document, model_version): a document analyzed under an
     # older model has a row here but none for the current version, so an empty
@@ -75,7 +77,7 @@ async def run_analysis(session: AsyncSession, document: Document) -> list[Analys
     """Cache-miss path: hand the normalized text to app.agent (which cleans,
     chunks, and takes the per-category max across chunks) and persist the
     returned scores as Analysis rows (model_version from settings)."""
-    scores = await classifier.analyze(document.normalized_text)
+    scores = await classifier.analyze(document.original_text)
     analyses = [
         Analysis(
             document_id=document.id,

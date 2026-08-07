@@ -4,12 +4,19 @@ Pure functions only — no model, no Ollama, no database. Anything that depends
 on what a real model does lives in ``tests/system.py``.
 """
 
+import pytest
+
+from app.agent import classifier
+from app.agent.categories import SCORE_ABSENT
 from app.agent.chunking import (
     find_headings,
     split_document,
     split_sections,
     tiktoken_counter,
 )
+from app.agent.output import densify
+from app.core.config import settings
+from app.schemas.analysis import ChunkClassification, ClauseCategory, Finding
 
 
 def words(text: str) -> int:
@@ -208,3 +215,117 @@ def test_the_default_counter_reports_nothing_for_empty_text() -> None:
 def test_the_default_counter_is_built_once_per_process() -> None:
     """Loading the encoding is slow; every chunk must not pay for it."""
     assert tiktoken_counter() is tiktoken_counter()
+
+
+# --- analyze: whole document ------------------------------------------------
+#
+# classify_chunk is stubbed throughout: what a real model returns belongs in
+# tests/system.py. What is under test here is fan-out and the merge.
+
+MULTI_SECTION = (
+    "1. Dispute Resolution.\nYou agree to binding arbitration.\n\n"
+    "2. Termination.\nWe may close your account at any time.\n"
+)
+
+
+def _finding(category: ClauseCategory, score: int, evidence: str) -> Finding:
+    return Finding(
+        category=category,
+        evidence=evidence,
+        score=score,  # type: ignore[arg-type]
+        explanation=f"{category.value} at {score}",
+    )
+
+
+def _stub_classify(
+    monkeypatch: pytest.MonkeyPatch, per_chunk: list[list[Finding]]
+) -> list[str]:
+    """Feed each chunk a canned result; record the chunks that were classified."""
+    seen: list[str] = []
+
+    async def fake(text: str) -> ChunkClassification:
+        index = len(seen)
+        seen.append(text)
+        return densify(per_chunk[index] if index < len(per_chunk) else [])
+
+    monkeypatch.setattr(classifier, "classify_chunk", fake)
+    return seen
+
+
+async def test_returns_every_category_in_declaration_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_classify(monkeypatch, [])
+    scores = await classifier.analyze(MULTI_SECTION)
+    assert [s.category for s in scores] == list(ClauseCategory)
+
+
+async def test_classifies_every_chunk_of_the_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _stub_classify(monkeypatch, [])
+    await classifier.analyze(MULTI_SECTION)
+    assert len(seen) == len(
+        split_document(
+            MULTI_SECTION,
+            count_tokens=tiktoken_counter(),
+            max_tokens=settings.chunk_tokens,
+        )
+    )
+
+
+async def test_category_score_is_the_max_across_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clause scored 2 in one chunk must not be diluted by a 1 in another."""
+    monkeypatch.setattr(settings, "chunk_tokens", 12)
+    _stub_classify(
+        monkeypatch,
+        [
+            [_finding(ClauseCategory.ARBITRATION, 1, "binding arbitration")],
+            [_finding(ClauseCategory.ARBITRATION, 2, "no opt-out")],
+        ],
+    )
+    scores = await classifier.analyze(MULTI_SECTION)
+    arbitration = next(s for s in scores if s.category is ClauseCategory.ARBITRATION)
+    assert arbitration.score == 2
+
+
+async def test_findings_from_different_chunks_are_all_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "chunk_tokens", 12)
+    _stub_classify(
+        monkeypatch,
+        [
+            [_finding(ClauseCategory.ARBITRATION, 2, "arbitrator of our choosing")],
+            [_finding(ClauseCategory.ARBITRATION, 2, "class action waiver")],
+        ],
+    )
+    scores = await classifier.analyze(MULTI_SECTION)
+    arbitration = next(s for s in scores if s.category is ClauseCategory.ARBITRATION)
+    assert [f.evidence for f in arbitration.findings] == [
+        "arbitrator of our choosing",
+        "class action waiver",
+    ]
+
+
+async def test_an_identical_finding_in_two_chunks_collapses_to_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated boilerplate is one clause, not two."""
+    monkeypatch.setattr(settings, "chunk_tokens", 12)
+    repeated = _finding(ClauseCategory.LIABILITY, 2, "liability capped at $50")
+    _stub_classify(monkeypatch, [[repeated], [repeated]])
+    scores = await classifier.analyze(MULTI_SECTION)
+    liability = next(s for s in scores if s.category is ClauseCategory.LIABILITY)
+    assert len(liability.findings) == 1
+
+
+async def test_an_empty_document_scores_every_category_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _stub_classify(monkeypatch, [])
+    scores = await classifier.analyze("")
+    assert seen == []
+    assert all(s.score == SCORE_ABSENT and s.findings == [] for s in scores)

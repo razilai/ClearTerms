@@ -24,9 +24,24 @@ async def get_by_hash(session: AsyncSession, text_hash: str) -> Document | None:
 
 
 async def create(
-    session: AsyncSession, text_hash: str, url: str | None, normalized_text: str
+    session: AsyncSession,
+    text_hash: str,
+    url: str | None,
+    normalized_text: str,
+    original_text: str | None = None,
 ) -> Document:
-    document = Document(text_hash=text_hash, url=url, normalized_text=normalized_text)
+    """Persist a document. ``original_text`` is what the agent later reads.
+
+    It defaults to ``normalized_text`` only so existing callers keep working;
+    production must pass the text as submitted, since the normalized form has
+    no line breaks or capitals for the chunker to find sections with.
+    """
+    document = Document(
+        text_hash=text_hash,
+        url=url,
+        normalized_text=normalized_text,
+        original_text=normalized_text if original_text is None else original_text,
+    )
     session.add(document)
     # Flush, don't commit: the caller owns the transaction boundary. This
     # populates document.id and surfaces the unique-text_hash violation here.
