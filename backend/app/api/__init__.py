@@ -13,4 +13,4 @@ api_router.include_router(auth.router)
 api_router.include_router(preferences.router)
 api_router.include_router(analysis.router)
 api_router.include_router(history.router)
-api_router.include_router(forum.router)  # phase 2 surface; 501s until implemented
+api_router.include_router(forum.router)

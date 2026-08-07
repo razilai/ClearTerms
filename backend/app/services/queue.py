@@ -26,8 +26,14 @@ class AnalysisQueue:
         # TODO: implement
 
     async def submit(self, user_id: int, job: Callable[[], Awaitable[T]]) -> T:
-        """Enqueue an analysis job for user_id and await its result."""
-        raise NotImplementedError
+        """Enqueue an analysis job for user_id and await its result.
+
+        MVP: run the job inline. The per-user priority scheduling this class is
+        meant to provide is a later phase; the seam (callers submit a job and
+        await the result) is in place so wiring it up later needs no changes at
+        the call sites.
+        """
+        return await job()
 
 
 queue = AnalysisQueue()

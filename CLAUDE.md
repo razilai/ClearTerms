@@ -33,7 +33,7 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     auth/       context.ts, AuthContext.tsx (provider), useAuth.ts, RequireAuth.tsx, storage.ts
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage
     components/ CommentItem
-tests/          test tiers: unit.py, integration.py, system.py, security.py, stress.py
+tests/          test tiers: unit.py, integration.py, system.py
                 + devserver.py (fake-backed uvicorn for frontend dev)
 docker-compose.yml, backend/Dockerfile
 ```
@@ -54,8 +54,9 @@ core  (shared leaf; imports from none of the above)
 
 ## Current state (as of feature-forum branch)
 
-Backend is skeleton + two implemented slices; the web app frontend covers those
-same slices (auth + forum). The Chrome extension does **not exist yet**.
+Backend covers auth, forum, and the analysis pipeline (analyze + history +
+preferences); the web app frontend covers all of these. The Chrome extension
+does **not exist yet**, and the agent still returns dummy scores (see below).
 
 **Implemented:**
 - **Auth** (`services/auth.py`, `api/auth.py`): signup, login, JWT issue/verify.
@@ -70,23 +71,37 @@ same slices (auth + forum). The Chrome extension does **not exist yet**.
   `POST/GET /forum/posts`, `GET/DELETE /forum/posts/{id}`,
   `POST /forum/posts/{id}/comments`, `PATCH/DELETE /forum/comments/{id}`,
   `PUT /forum/posts/{id}/like` (toggle). All require auth.
+- **Analysis pipeline** (`services/analysis.py`, `api/analysis.py`): `POST /analyze`
+  (normalize → hash → cache lookup → verdict + history append) and `GET
+  /analyses/{id}` (per-category breakdown). `analysis_id` in the response *is* the
+  `document_id` — the cache is keyed per document. `run_analysis` calls the agent
+  (currently dummy) and persists one `Analysis` row per category.
+- **History** (`services/history.py`, `api/history.py`): `GET /history` — every doc
+  the user has had reviewed, newest first, with the document url joined in (service
+  returns the API schema, like forum).
+- **Preferences** (`services/preferences.py`, `api/preferences.py`): `GET/PUT
+  /preferences` (full replace) plus `compute_verdict(scores, prefs)` — placeholder
+  policy: thumbs-down if any category the user weights > 0 scored aggressive;
+  unconfigured categories default to weight 1.0.
 - **Shared deps** (`api/deps.py`): `SessionDep`, `CurrentUserDep`.
 - **Config** (`core/config.py`): pydantic-settings, `CLEARTERMS_` env prefix.
-- **Frontend** (`frontend/`): login/signup + forum pages against the routes
-  above. Session = JWT + email in localStorage (no `/me` endpoint; ownership UI
-  compares `author_email` to the stored email — server still enforces via 403).
-  Vite dev server proxies `/auth` and `/forum` to `:8000`; no CORS configured on
-  the backend (deliberate — revisit at deployment). Known gap: `GET
-  /forum/posts/{id}` doesn't say whether the current user liked the post, so the
-  like button has no initial pressed-state.
+- **Frontend** (`frontend/`): login/signup, forum, **and analysis** — analyze,
+  history, analysis-detail, and settings (preference weights) pages against the
+  routes above. Session = JWT + email in localStorage (no `/me` endpoint; ownership
+  UI compares `author_email` to the stored email — server still enforces via 403).
+  Vite dev server proxies `/auth`, `/forum`, `/analyze`, `/analyses`, `/history`,
+  `/preferences` to `:8000`; no CORS configured on the backend (deliberate — revisit
+  at deployment). Known gap: `GET /forum/posts/{id}` doesn't say whether the current
+  user liked the post, so the like button has no initial pressed-state.
 
 **Stubbed / not implemented:**
-- Analysis pipeline (`services/analysis.py`), preferences verdict computation,
-  the agent layer, and the priority queue.
+- **Agent** (`agent/classifier.py::analyze`) returns dummy scores (1 for every
+  category) so the pipeline runs end-to-end without Ollama — the real chunk-and-
+  classify path is still TODO.
+- **Priority queue** (`services/queue.py`): `submit` runs the job inline; per-user
+  priority scheduling is a later phase.
 - `services/forum.py::check_rate_limit` raises `NotImplementedError` (phase-2
   guardrail, not wired yet).
-- Note: `api/__init__.py` still comments the forum router as "501s until
-  implemented" — stale; forum is now implemented.
 
 ## Working on the backend
 
@@ -116,9 +131,9 @@ npm run build      # tsc -b && vite build — this is the typecheck gate
 npm run lint       # oxlint
 ```
 
-The real DB repos are `NotImplementedError` stubs, so a plain
-`uvicorn app.main:app` 500s on anything but `/health`. Run the backend for
-frontend dev with the in-memory fakes instead (state resets on restart):
+A plain `uvicorn app.main:app` points at the on-disk `data/` SQLite db and is
+CWD-relative, so 500s if run from the wrong dir. For frontend dev, run the
+backend against a real in-memory SQLite db instead (state resets on restart):
 
 ```bash
 uv run --project backend python tests/devserver.py    # from repo root
@@ -126,12 +141,13 @@ uv run --project backend python tests/devserver.py    # from repo root
 
 ## Testing notes
 
-- The DB layer isn't implemented yet. `tests/fakes.py` patches `app.db.repos`
-  with in-memory fakes; `conftest.py` overrides the session dependency to yield
-  `None` (unused by fakes). When the real DB lands, swap for an in-memory SQLite
-  engine + session override — the endpoint tests stay valid.
-- Fixtures: `store` (FakeStore), `client` (httpx ASGITransport), `auth_headers`
-  (signs up alice@example.com and returns a Bearer header).
+- Tests run against a real in-memory SQLite db (aiosqlite + `StaticPool`), not
+  fakes. `conftest.py`'s `session` fixture builds a fresh schema per test; the
+  `client` fixture overrides the session dependency to hand every request that
+  same session, so writes stay visible across requests without a commit.
+- Fixtures: `session` (AsyncSession on a fresh db), `client` (httpx
+  ASGITransport), `auth_headers` (signs up alice@example.com, returns a Bearer
+  header). `signup_headers(client, email)` mints a header for any email.
 - Testing strategy is **hybrid**: test-first for backend logic (analysis
   pipeline, preference matching, API contracts); build-first for UI/extension.
 

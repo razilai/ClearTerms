@@ -23,5 +23,13 @@ async def init_db() -> None:
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
+    # Repos flush but never commit — the request owns the transaction boundary.
+    # Commit on a clean handler return so writes persist; roll back on any error
+    # (including the service-layer domain exceptions the api maps to 4xx).
     async with SessionFactory() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
