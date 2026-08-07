@@ -7,6 +7,7 @@ from app.services.exceptions import (
     DomainError,
     DuplicateEmailError,
     InvalidCredentialsError,
+    InvalidInputError,
     NotFoundError,
     NotOwnerError,
 )
@@ -34,5 +35,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 return JSONResponse(
                     status_code=403, content={"detail": "Not the owner"}
                 )
+            case InvalidInputError(detail=detail):
+                return JSONResponse(status_code=400, content={"detail": detail})
             case _:
                 raise exc

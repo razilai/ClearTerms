@@ -236,3 +236,113 @@ async def test_toggle_like(client: httpx.AsyncClient, auth_headers: dict) -> Non
 async def test_like_missing_post(client: httpx.AsyncClient, auth_headers: dict) -> None:
     resp = await client.put("/forum/posts/9999/like", headers=auth_headers)
     assert resp.status_code == 404
+
+
+# --- analysis + history + preferences ---
+#
+# Run the whole pipeline (analyze -> cache -> verdict -> history) against the
+# real repos and the dummy classifier (app.agent.classifier.analyze returns a
+# score of 1 for every category, so no Ollama is needed).
+
+ANALYZE_BODY = {"text": "You agree to binding arbitration.", "url": "https://ex.test/tos"}
+
+
+async def test_analyze_returns_verdict_and_id(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    resp = await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Dummy scores are all 1 (standard), so with default weights the verdict is up.
+    assert body["verdict"] == "up"
+    assert isinstance(body["analysis_id"], int)
+
+
+async def test_analyze_is_cached_across_calls(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    first = await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
+    second = await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
+    # Same normalized text -> same document -> same analysis_id.
+    assert first.json()["analysis_id"] == second.json()["analysis_id"]
+
+
+async def test_analyze_too_large(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    big = {"text": "x" * 1_000_001, "url": None}
+    resp = await client.post("/analyze", json=big, headers=auth_headers)
+    assert resp.status_code == 413
+
+
+async def test_analysis_detail(client: httpx.AsyncClient, auth_headers: dict) -> None:
+    analysis_id = (
+        await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
+    ).json()["analysis_id"]
+
+    resp = await client.get(f"/analyses/{analysis_id}", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == analysis_id
+    assert body["url"] == "https://ex.test/tos"
+    # One CategoryScore per clause category from the dummy classifier.
+    assert len(body["scores"]) == 6
+    assert {s["score"] for s in body["scores"]} == {1}
+
+
+async def test_analysis_detail_missing(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    resp = await client.get("/analyses/9999", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_history_lists_analyzed_documents(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
+
+    resp = await client.get("/history", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    entries = resp.json()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["url"] == "https://ex.test/tos"
+    assert entries[0]["verdict"] == "up"
+
+
+async def test_history_empty_for_new_user(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    resp = await client.get("/history", headers=auth_headers)
+    assert resp.json() == {"entries": []}
+
+
+async def test_preferences_round_trip(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    assert (await client.get("/preferences", headers=auth_headers)).json() == {
+        "items": []
+    }
+
+    items = [{"category": "arbitration", "weight": 0.0}]
+    put = await client.put(
+        "/preferences", json={"items": items}, headers=auth_headers
+    )
+    assert put.status_code == 200
+    assert put.json() == {"items": items}
+    assert (await client.get("/preferences", headers=auth_headers)).json() == {
+        "items": items
+    }
+
+
+async def test_preferences_duplicate_category_rejected(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    items = [
+        {"category": "arbitration", "weight": 0.5},
+        {"category": "arbitration", "weight": 1.0},
+    ]
+    resp = await client.put(
+        "/preferences", json={"items": items}, headers=auth_headers
+    )
+    assert resp.status_code == 400
