@@ -31,3 +31,11 @@ class NotFoundError(DomainError):
 
 class NotOwnerError(DomainError):
     """Caller is not the owner of the resource they tried to modify."""
+
+
+class InvalidInputError(DomainError):
+    """Request was well-formed but semantically invalid (e.g. duplicate keys)."""
+
+    def __init__(self, detail: str = "invalid input") -> None:
+        super().__init__(detail)
+        self.detail = detail
