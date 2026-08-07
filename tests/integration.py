@@ -1,4 +1,4 @@
-"""Integration tests: auth + forum endpoints against the app with faked repos."""
+"""Integration tests: auth + forum endpoints against a real in-memory SQLite DB."""
 
 import httpx
 

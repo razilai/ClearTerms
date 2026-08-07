@@ -33,7 +33,7 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     auth/       context.ts, AuthContext.tsx (provider), useAuth.ts, RequireAuth.tsx, storage.ts
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage
     components/ CommentItem
-tests/          test tiers: unit.py, integration.py, system.py, security.py, stress.py
+tests/          test tiers: unit.py, integration.py, system.py
                 + devserver.py (fake-backed uvicorn for frontend dev)
 docker-compose.yml, backend/Dockerfile
 ```
@@ -116,9 +116,9 @@ npm run build      # tsc -b && vite build — this is the typecheck gate
 npm run lint       # oxlint
 ```
 
-The real DB repos are `NotImplementedError` stubs, so a plain
-`uvicorn app.main:app` 500s on anything but `/health`. Run the backend for
-frontend dev with the in-memory fakes instead (state resets on restart):
+A plain `uvicorn app.main:app` points at the on-disk `data/` SQLite db and is
+CWD-relative, so 500s if run from the wrong dir. For frontend dev, run the
+backend against a real in-memory SQLite db instead (state resets on restart):
 
 ```bash
 uv run --project backend python tests/devserver.py    # from repo root
@@ -126,12 +126,13 @@ uv run --project backend python tests/devserver.py    # from repo root
 
 ## Testing notes
 
-- The DB layer isn't implemented yet. `tests/fakes.py` patches `app.db.repos`
-  with in-memory fakes; `conftest.py` overrides the session dependency to yield
-  `None` (unused by fakes). When the real DB lands, swap for an in-memory SQLite
-  engine + session override — the endpoint tests stay valid.
-- Fixtures: `store` (FakeStore), `client` (httpx ASGITransport), `auth_headers`
-  (signs up alice@example.com and returns a Bearer header).
+- Tests run against a real in-memory SQLite db (aiosqlite + `StaticPool`), not
+  fakes. `conftest.py`'s `session` fixture builds a fresh schema per test; the
+  `client` fixture overrides the session dependency to hand every request that
+  same session, so writes stay visible across requests without a commit.
+- Fixtures: `session` (AsyncSession on a fresh db), `client` (httpx
+  ASGITransport), `auth_headers` (signs up alice@example.com, returns a Bearer
+  header). `signup_headers(client, email)` mints a header for any email.
 - Testing strategy is **hybrid**: test-first for backend logic (analysis
   pipeline, preference matching, API contracts); build-first for UI/extension.
 
