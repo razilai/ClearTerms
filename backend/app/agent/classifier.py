@@ -206,22 +206,3 @@ async def analyze(text: str) -> list[ClauseScore]:
         for finding in score.findings
     ]
     return densify(pooled).scores
-
-    # TODO: services wants list[CategoryScore] — one `explanation` string per
-    # category — but a ClauseScore holds a list of Findings, each with its own
-    # evidence and explanation. Collapsing them is lossy and the shape is not
-    # settled yet, so it is deliberately not done here. Once decided, the
-    # conversion is roughly:
-    #
-    #     return [
-    #         CategoryScore(
-    #             category=score.category.value,
-    #             score=score.score,
-    #             explanation=" ".join(f.explanation for f in score.findings) or None,
-    #         )
-    #         for score in densify(pooled).scores
-    #     ]
-    #
-    # Joining is the cheapest option and keeps every explanation, but discards
-    # the evidence spans entirely. Storing findings properly (a JSON column on
-    # Analysis, or a Finding table) is the alternative — see docs/superpowers.

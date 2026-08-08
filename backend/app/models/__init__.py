@@ -9,6 +9,7 @@ table on Base.metadata (needed by init_db / create_all).
 from app.models.analysis import Analysis
 from app.models.base import Base
 from app.models.document import Document
+from app.models.finding import Finding
 from app.models.forum import Comment, Like, Post
 from app.models.history import HistoryEntry
 from app.models.preference import Preference
@@ -19,6 +20,7 @@ __all__ = [
     "Base",
     "Comment",
     "Document",
+    "Finding",
     "HistoryEntry",
     "Like",
     "Post",

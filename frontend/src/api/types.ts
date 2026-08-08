@@ -49,10 +49,18 @@ export interface VerdictResponse {
   analysis_id: number
 }
 
+export interface FindingOut {
+  evidence: string
+  score: number
+  explanation: string
+}
+
 export interface CategoryScore {
   category: string
   score: number
-  explanation: string | null
+  // Every clause found for this category; score is their max. Always present,
+  // empty for a category the document does not address.
+  findings: FindingOut[]
 }
 
 export interface AnalysisDetail {

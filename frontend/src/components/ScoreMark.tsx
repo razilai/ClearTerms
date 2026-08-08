@@ -45,8 +45,17 @@ export function ScoreMark({ entry, index }: Props) {
           </Text>
         )}
       </Group>
-      {entry.explanation && (
-        <div className={classes.note}>{entry.explanation}</div>
+      {entry.findings.length > 0 && (
+        <div className={classes.findings}>
+          {entry.findings.map((finding, i) => (
+            // No id on the wire — storage identity stays server-side — and the
+            // list is static per render, so the index is a stable key.
+            <div key={i} className={classes.finding}>
+              <div className={classes.note}>{finding.evidence}</div>
+              <div className={classes.gloss}>{finding.explanation}</div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

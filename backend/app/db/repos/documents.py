@@ -2,6 +2,7 @@ from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Analysis, Document
 
@@ -52,6 +53,13 @@ async def create(
 async def get_analyses(
     session: AsyncSession, document_id: int, model_version: str
 ) -> list[Analysis]:
+    """Scores only — findings are left unloaded on purpose.
+
+    This is the POST /analyze cache lookup, which only needs one number per
+    category to compute a verdict. Analysis.findings is lazy="raise", so a
+    caller that wants them here gets an error rather than a silent query per
+    category; use get_document_with_analyses instead.
+    """
     result = await session.execute(
         select(Analysis).where(
             Analysis.document_id == document_id,
@@ -79,7 +87,14 @@ async def get_document_with_analyses(
 
     # No model_version filter: this is the detail view, which shows everything
     # stored for the document.
+    #
+    # selectinload because findings are lazy="raise": the detail response reads
+    # them, so they must be loaded up front. It issues one extra SELECT over all
+    # the analysis ids rather than one per row, and applies the relationship's
+    # order_by, so findings come back in the order densify reported them.
     analyses = await session.execute(
-        select(Analysis).where(Analysis.document_id == document_id)
+        select(Analysis)
+        .where(Analysis.document_id == document_id)
+        .options(selectinload(Analysis.findings))
     )
     return document, list(analyses.scalars().all())

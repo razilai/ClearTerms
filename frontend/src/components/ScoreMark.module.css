@@ -40,9 +40,18 @@
   text-align: right;
 }
 
-.note {
+/* Indent once here so every finding lines up under the category label. */
+.findings {
   margin-top: 4px;
   margin-left: 2.5rem;
+}
+
+.finding + .finding {
+  margin-top: 8px;
+}
+
+/* The verbatim excerpt — set as a pull-quote, since that is what it is. */
+.note {
   display: inline-block;
   padding: 2px 8px;
   background-color: var(--mantine-color-highlight-1);
@@ -51,4 +60,13 @@
   font-style: italic;
   font-size: 0.85rem;
   color: var(--mantine-color-ink-8);
+}
+
+/* Our reading of the quote above it — plainer, so the document's own words
+   stay the emphasized thing. */
+.gloss {
+  margin-top: 2px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--mantine-color-ink-7);
 }
