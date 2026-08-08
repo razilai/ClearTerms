@@ -13,7 +13,9 @@ class Post(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"))
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id"), index=True
+    )
     category: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
