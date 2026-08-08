@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.db.repos import documents as documents_repo
 from app.db.repos import history as history_repo
 from app.db.repos import preferences as preferences_repo
-from app.models import Analysis, Document
+from app.models import Analysis, Document, Finding
 from app.services.exceptions import NotFoundError
 from app.services.preferences import compute_verdict
 from app.services.queue import queue
@@ -76,15 +76,30 @@ async def get_analysis_detail(
 async def run_analysis(session: AsyncSession, document: Document) -> list[Analysis]:
     """Cache-miss path: hand the normalized text to app.agent (which cleans,
     chunks, and takes the per-category max across chunks) and persist the
-    returned scores as Analysis rows (model_version from settings)."""
+    returned scores as Analysis rows (model_version from settings).
+
+    Each ClauseScore becomes one Analysis carrying one Finding per quoted
+    clause. Only the parents are added: the relationship cascades, so
+    SQLAlchemy inserts each Analysis, reads back its id, and fills in the
+    children's analysis_id itself.
+    """
     scores = await classifier.analyze(document.original_text)
     analyses = [
         Analysis(
             document_id=document.id,
-            category=score.category,
+            # ClauseCategory is a StrEnum and the column is String: take .value
+            # so the stored label is the slug, not enum coercion's choice.
+            category=score.category.value,
             score=score.score,
-            explanation=score.explanation,
             model_version=settings.model_version,
+            findings=[
+                Finding(
+                    evidence=finding.evidence,
+                    score=finding.score,
+                    explanation=finding.explanation,
+                )
+                for finding in score.findings
+            ],
         )
         for score in scores
     ]

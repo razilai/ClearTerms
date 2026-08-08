@@ -6,6 +6,7 @@ from app.schemas.analysis import (
     AnalysisDetail,
     AnalyzeRequest,
     CategoryScore,
+    FindingOut,
     VerdictResponse,
 )
 from app.services import analysis as analysis_service
@@ -45,7 +46,16 @@ async def get_analysis(
         url=document.url,
         scores=[
             CategoryScore(
-                category=a.category, score=a.score, explanation=a.explanation
+                category=a.category,
+                score=a.score,
+                # Safe to read: the repo selectinload'd these. id/analysis_id
+                # stay behind — they are storage identity, not wire data.
+                findings=[
+                    FindingOut(
+                        evidence=f.evidence, score=f.score, explanation=f.explanation
+                    )
+                    for f in a.findings
+                ],
             )
             for a in current
         ],

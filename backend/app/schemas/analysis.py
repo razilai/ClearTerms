@@ -10,10 +10,28 @@ class AnalyzeRequest(BaseModel):
     url: str | None = None
 
 
+class FindingOut(BaseModel):
+    """One quoted clause on the wire — mirrors an ``app.models.Finding`` row.
+
+    Deliberately not the ``Finding`` defined below. That one is a prompt
+    contract: its JSON schema is what constrains Ollama's decoding, its field
+    order is load-bearing, and its ``Literal[1, 2]`` score exists to make zero
+    unrepresentable. This one answers to the frontend instead, and the two are
+    free to diverge.
+    """
+
+    evidence: str
+    score: int
+    explanation: str
+
+
 class CategoryScore(BaseModel):
     category: str  # TODO: should this be an enum?
     score: int  # TODO: should this be limited to some score range?
-    explanation: str | None = None
+    # Every clause found for this category, not just the worst — ``score`` is
+    # their max. Defaults to empty so an absent category serializes as [], not
+    # null, and callers can iterate without a null check.
+    findings: list[FindingOut] = []
 
 
 class VerdictResponse(BaseModel):
