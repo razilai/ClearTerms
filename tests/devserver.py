@@ -45,7 +45,8 @@ def main() -> None:
         # Patch the engine before importing app.main so lifespan.init_db (a
         # connectivity check now) and every request use this container's db.
         # SessionFactory needs patching too — get_session resolves it as a module
-        # global on every request.
+        # global on every request, and app.main's lifespan imports it directly to
+        # hand the analysis queue its worker sessions.
         import app.db.engine as db_engine
 
         app_engine = create_async_engine(url)

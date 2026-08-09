@@ -3,13 +3,15 @@
 No app, no fakes.
 """
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.db.repos import documents, history, preferences, users
@@ -17,6 +19,7 @@ from app.models import Analysis, Document, Finding, Preference, User
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
 from app.services.exceptions import InvalidTokenError
+from app.services.queue import AnalysisQueue
 
 
 def _encode(claims: dict, *, secret: str | None = None, algorithm: str = "HS256") -> str:
@@ -545,3 +548,278 @@ async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
 
     found = await history.list_for_user(session, user.id, limit=50)
     assert [e.id for e in found] == [newest.id, middle.id, oldest.id]
+
+
+# --- analysis queue ----------------------------------------------------------
+#
+# The `session` fixture's StaticPool hands every session the same DBAPI
+# connection, which would hide the cross-session behaviour under test here.
+# These use `file_session_factory` (a real SQLite file, one connection per
+# session) so the worker's session is genuinely independent of the caller's.
+
+
+async def test_submit_runs_the_job_and_returns_its_result(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    try:
+
+        async def job(session: AsyncSession) -> str:
+            return "done"
+
+        assert await q.submit(user_id=1, job=job) == "done"
+    finally:
+        await q.stop()
+
+
+async def test_worker_gives_the_job_a_live_session_the_caller_does_not_own(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The job's session must be usable and must not be the caller's."""
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    try:
+        async with file_session_factory() as caller_session:
+
+            async def job(session: AsyncSession) -> bool:
+                # Usable: a real query runs against it.
+                await session.execute(select(User))
+                return session is not caller_session
+
+            assert await q.submit(user_id=1, job=job) is True
+    finally:
+        await q.stop()
+
+
+async def test_worker_commits_the_job_session(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Writes a job makes are durable without the caller committing anything."""
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    try:
+
+        async def job(session: AsyncSession) -> None:
+            session.add(User(email="queued@example.com", password_hash="x"))
+
+        await q.submit(user_id=1, job=job)
+    finally:
+        await q.stop()
+
+    async with file_session_factory() as verify:
+        found = await verify.execute(
+            select(User).where(User.email == "queued@example.com")
+        )
+        assert found.scalar_one_or_none() is not None
+
+
+async def test_job_exception_propagates_to_the_caller(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    try:
+
+        async def job(session: AsyncSession) -> None:
+            raise ValueError("job blew up")
+
+        with pytest.raises(ValueError, match="job blew up"):
+            await q.submit(user_id=1, job=job)
+
+        # The worker survives a failed job and keeps serving.
+        async def ok(session: AsyncSession) -> str:
+            return "still alive"
+
+        assert await q.submit(user_id=1, job=ok) == "still alive"
+    finally:
+        await q.stop()
+
+
+async def test_single_worker_runs_one_job_at_a_time(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    running = 0
+    peak = 0
+    try:
+
+        async def job(session: AsyncSession) -> None:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.05)
+            running -= 1
+
+        await asyncio.gather(*(q.submit(user_id=i, job=job) for i in range(5)))
+    finally:
+        await q.stop()
+
+    assert peak == 1
+
+
+async def test_two_workers_run_two_jobs_at_a_time(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=2)
+    running = 0
+    peak = 0
+    try:
+
+        async def job(session: AsyncSession) -> None:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.05)
+            running -= 1
+
+        await asyncio.gather(*(q.submit(user_id=i, job=job) for i in range(6)))
+    finally:
+        await q.stop()
+
+    assert peak == 2
+
+
+async def test_jobs_from_one_user_run_in_submission_order(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Same user, same priority -> FIFO. Proves the tie-break is stable."""
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    order: list[int] = []
+    try:
+
+        def make(n: int) -> Callable[[AsyncSession], Awaitable[None]]:
+            async def job(session: AsyncSession) -> None:
+                order.append(n)
+
+            return job
+
+        await asyncio.gather(*(q.submit(user_id=7, job=make(n)) for n in range(5)))
+    finally:
+        await q.stop()
+
+    assert order == [0, 1, 2, 3, 4]
+
+
+async def test_stop_cancels_workers(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=2)
+    await q.stop()
+    assert q._workers == []
+
+
+# --- analysis pipeline: get_or_create_document + queue wiring ---------------
+
+
+async def test_get_or_create_document_is_idempotent(session: AsyncSession) -> None:
+    from app.services.analysis import get_or_create_document
+
+    first = await get_or_create_document(
+        session, "hash-abc", "https://example.com/tos", "normalized", "Original"
+    )
+    second = await get_or_create_document(
+        session, "hash-abc", "https://example.com/tos", "normalized", "Original"
+    )
+    assert first.id == second.id
+
+
+async def test_analyze_issues_no_write_before_submitting(
+    file_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The caller must have issued no write by the time it parks on the queue.
+
+    Holding an *uncommitted write* across the wait is the defect this task
+    removes: on SQLite that is the global write lock, on Postgres a row lock on
+    documents.text_hash plus a pooled connection held for the whole wait.
+
+    Deliberately NOT asserted via `session.in_transaction()`: SQLAlchemy
+    autobegins a transaction on the first SELECT, so that flag is True after a
+    harmless read and would be testing the wrong thing.
+    """
+    from sqlalchemy import event
+
+    from app.services import analysis as analysis_service
+    from app.services.queue import AnalysisQueue
+
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    statements: list[str] = []
+    writes_at_submit: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    engine = file_session_factory.kw["bind"]
+    event.listen(engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        async with file_session_factory() as caller:
+            user = User(email="probe@example.com", password_hash="x")
+            caller.add(user)
+            await caller.commit()
+            statements.clear()  # fixture setup is not under test
+
+            class SpyQueue:
+                async def submit(self, user_id: int, job: object) -> object:
+                    writes_at_submit.extend(
+                        s
+                        for s in statements
+                        if s.lstrip()
+                        .upper()
+                        .startswith(("INSERT", "UPDATE", "DELETE"))
+                    )
+                    return await q.submit(user_id, job)  # type: ignore[arg-type]
+
+            # monkeypatch (not raw assignment) so the module singleton is
+            # restored at teardown; a leaked patch would point every later test
+            # at this dead queue.
+            monkeypatch.setattr(analysis_service, "queue", SpyQueue())
+            await analysis_service.analyze(
+                caller, user.id, "Some terms of service text.", None
+            )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", _record)
+        await q.stop()
+
+    assert writes_at_submit == []
+
+
+async def test_concurrent_jobs_for_the_same_text_share_one_document(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The get-or-create race: both jobs must land on one document row.
+
+    Tested at the service layer, not over HTTP: the `client` fixture overrides
+    `get_session` so every request in a test shares ONE AsyncSession, and
+    AsyncSession is not safe for concurrent use by multiple tasks. Two
+    concurrent HTTP requests would exercise an unsupported configuration rather
+    than the race. Here each job gets a genuinely independent session, which is
+    what production does.
+    """
+    from app.services.analysis import analyze_document_job
+
+    async def run_job() -> int:
+        async with file_session_factory() as session:
+            document_id = await analyze_document_job(
+                session,
+                text_hash="race-hash",
+                url=None,
+                normalized_text="identical terms of service text.",
+                original_text="Identical terms of service text.",
+            )
+            await session.commit()
+            return document_id
+
+    first, second = await asyncio.gather(run_job(), run_job())
+    assert first == second
+
+    async with file_session_factory() as verify:
+        rows = await verify.execute(
+            select(Document).where(Document.text_hash == "race-hash")
+        )
+        assert len(rows.scalars().all()) == 1

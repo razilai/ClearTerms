@@ -812,3 +812,29 @@ async def test_queue_timeout_maps_to_504() -> None:
     resp = await _probe_app_response(QueueTimeoutError())
     assert resp.status_code == 504
     assert resp.json()["detail"] == "Analysis timed out waiting to start"
+
+
+# --- analysis pipeline through a live queue ---------------------------------
+#
+# httpx.ASGITransport does not run FastAPI's lifespan, so the queue is not
+# started for tests by default; each test that needs it starts it explicitly.
+
+
+async def test_analyze_runs_through_a_live_queue(
+    client: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    # The `client` fixture starts the queue itself (bound to the same
+    # in-memory database the client's requests use); starting it again here
+    # against a different, file-backed factory would point the worker at a
+    # database the caller can't see its writes in.
+    resp = await client.post(
+        "/analyze",
+        json={"text": "You waive all rights. We may share your data.", "url": None},
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["verdict"] in {"up", "down"}
+    assert isinstance(body["analysis_id"], int)

@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from app.api import api_router
 from app.api.errors import register_exception_handlers
 from app.core.logging import setup_logging
-from app.db.engine import init_db
+from app.db.engine import SessionFactory, init_db
 from app.services.queue import queue
 
 
@@ -14,7 +14,7 @@ from app.services.queue import queue
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     await init_db()
-    await queue.start()
+    await queue.start(SessionFactory)
     yield
     await queue.stop()
 
