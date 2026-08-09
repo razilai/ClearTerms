@@ -4,20 +4,34 @@ Run from backend/ so the editable install resolves `app`:
 
     uv run --project backend pytest
 
-Tests run against a real in-memory SQLite database (aiosqlite), not fakes.
-The `session` fixture builds a fresh schema per test; the `client` fixture
-overrides `app.db.engine.get_session` to hand every request that same session,
-so writes a request flushes stay visible to later requests in the test without
-needing a commit (the app's repos flush; the request transaction boundary is
-not wired yet).
+Tests run against a real PostgreSQL database in a throwaway container
+(testcontainers), matching production — no SQLite, so dialect differences (FK
+enforcement, type semantics) can't hide until runtime. One container is started
+per test session; the schema is built once from the ORM metadata. Per-test
+isolation comes from wrapping every test in an outer transaction that is always
+rolled back, so tests never see each other's rows and the schema is never rebuilt.
+
+The `session` fixture yields a session bound to that transaction; the `client`
+fixture overrides `app.db.engine.get_session` to hand every request that same
+session, so writes a request flushes stay visible to later requests in the test
+without needing a commit (the app's repos flush; get_session owns the commit).
 """
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from testcontainers.community.postgres import PostgresContainer
+
 from app.agent import classifier
 from app.core.config import settings
 from app.db import engine as engine_module
@@ -26,8 +40,6 @@ from app.main import app
 # Importing Base from app.models (rather than app.models.base) also registers
 # every table on Base.metadata, which create_all below depends on.
 from app.models import Base
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 # The production model (qwen3:4b) is a thinking model: minutes per call on a
 # laptop CPU. The default tiers still hit a real agent — no fakes — but against
@@ -63,28 +75,61 @@ def light_agent(request: pytest.FixtureRequest) -> Iterator[None]:
         classifier.build_agent.cache_clear()
 
 
-@pytest_asyncio.fixture
-async def session() -> AsyncIterator[AsyncSession]:
-    """An AsyncSession on a fresh in-memory SQLite DB, isolated per test.
+@pytest.fixture(scope="session")
+def postgres_url() -> Iterator[str]:
+    """One Postgres container for the whole session, schema created once.
 
-    StaticPool keeps every checkout on one connection, so the ``:memory:``
-    database survives across sessions within a single test instead of being
-    dropped when a pooled connection is recycled.
+    A sync fixture: it drives async setup through a throwaway ``asyncio.run`` so
+    it doesn't pin an event loop that the (function-scoped) async fixtures would
+    then have to share — every engine below is created and used within a single
+    loop, which asyncpg requires.
     """
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    with PostgresContainer("postgres:16", driver="asyncpg") as pg:
+        url = pg.get_connection_url()
 
-        SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
-        async with SessionFactory() as session:
-            yield session
+        async def _create_schema() -> None:
+            engine = create_async_engine(url)
+            try:
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(_create_schema())
+        yield url
+
+
+@pytest_asyncio.fixture
+async def db_connection(postgres_url: str) -> AsyncIterator[AsyncConnection]:
+    """A connection inside an outer transaction that is always rolled back.
+
+    This is the per-test isolation boundary: sessions below bind to this
+    connection with ``join_transaction_mode="create_savepoint"``, so their
+    commits land on savepoints within this transaction and the final rollback
+    wipes everything the test wrote. The schema (created once per session)
+    survives because it was committed before this transaction began.
+    """
+    engine = create_async_engine(postgres_url)
+    conn = await engine.connect()
+    trans = await conn.begin()
+    try:
+        yield conn
     finally:
+        await trans.rollback()
+        await conn.close()
         await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def session(db_connection: AsyncConnection) -> AsyncIterator[AsyncSession]:
+    """An AsyncSession bound to the per-test transaction (rolled back at teardown)."""
+    factory = async_sessionmaker(
+        bind=db_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    async with factory() as s:
+        yield s
 
 
 @pytest_asyncio.fixture
@@ -104,7 +149,7 @@ async def client(session: AsyncSession) -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest_asyncio.fixture
 async def committing_client(
-    monkeypatch: pytest.MonkeyPatch,
+    db_connection: AsyncConnection, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[httpx.AsyncClient]:
     """A client whose requests each get a fresh session from the real get_session.
 
@@ -115,38 +160,31 @@ async def committing_client(
     request its own session, so data only crosses a request boundary if
     get_session actually commits.
 
-    One StaticPool engine backs every session, so all sessions see the same
-    ``:memory:`` database and committed rows outlive the session that wrote them.
+    Every session binds to the one per-test ``db_connection`` (via the patched
+    SessionFactory), so a real commit in request A lands on a savepoint the whole
+    connection shares and is visible to request B — while the outer transaction's
+    rollback at teardown still discards it all. get_session resolves
+    SessionFactory as a module global on each call, so patching the attribute is
+    enough.
     """
-    test_engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
+    monkeypatch.setattr(
+        engine_module,
+        "SessionFactory",
+        async_sessionmaker(
+            bind=db_connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
     )
-    try:
-        async with test_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
 
-        # get_session resolves SessionFactory as a module global on each call,
-        # so patching the attribute is enough — and each call builds its OWN
-        # session, which is the whole point of this fixture.
-        monkeypatch.setattr(engine_module, "engine", test_engine)
-        monkeypatch.setattr(
-            engine_module,
-            "SessionFactory",
-            async_sessionmaker(test_engine, expire_on_commit=False),
-        )
+    # No dependency_overrides entry: the real, committing get_session is the
+    # thing under test. Assert it, so a leaked override from another fixture
+    # cannot silently turn this back into the shared-session setup.
+    assert engine_module.get_session not in app.dependency_overrides
 
-        # No dependency_overrides entry: the real, committing get_session is the
-        # thing under test. Assert it, so a leaked override from another fixture
-        # cannot silently turn this back into the shared-session setup.
-        assert engine_module.get_session not in app.dependency_overrides
-
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-            yield c
-    finally:
-        await test_engine.dispose()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
 async def signup_headers(

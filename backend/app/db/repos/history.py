@@ -12,8 +12,6 @@ async def append(
     await session.flush()
     return entry
 
-# NOTE: orders by created_at in memory (only user_id is indexed). Fine at current
-#       scale; add a composite index on (user_id, created_at) if history grows large.
 async def list_for_user(session: AsyncSession, user_id: int) -> list[HistoryEntry]:
     result = await session.execute(
         select(HistoryEntry)

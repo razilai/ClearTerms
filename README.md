@@ -103,7 +103,7 @@ Analysis is **preference-independent**:
 ## Engineering Decisions
 
 - **Testing — hybrid**: test-first for backend logic (analysis pipeline, preference matching, API contracts); build-first for UI and extension, tests added once the shape stabilizes.
-- **Database — SQLite** for MVP; revisit (Postgres) if concurrent writes from the analysis queue + forum become a bottleneck.
+- **Database — PostgreSQL** (asyncpg), schema managed by Alembic migrations. Chosen over SQLite so concurrent writes from the analysis queue + forum don't serialize on a single writer.
 - **LLM — Qwen2.5-7B-Instruct via Ollama**; PydanticAI structured output enforces the classification schema and keeps the agent code provider-agnostic in case a hosted model is needed later. `model_version` on Analysis rows handles cache invalidation on model/prompt changes.
 - **CI/CD — GitHub Actions.** PR pipeline: lint (ruff + eslint) → typecheck (mypy + tsc) → unit tests (pytest + vitest) → build check (docker compose build, extension zip). LLM calls are mocked in CI; a small hand-labeled eval set (~20 TOS) runs as a separate manual/nightly job against the real model to catch prompt-quality drift. CD deferred until a deployment target exists (tag → build image → push registry → deploy).
 - **Extension auth — `externally_connectable` token handoff** (see Auth section). No anonymous mode.
@@ -116,7 +116,7 @@ Analysis is **preference-independent**:
 ## Tech Stack
 
 - PydanticAI + Ollama: LLM and agents (server-side)
-- SQLite: database
+- PostgreSQL: database (asyncpg + Alembic)
 - FastAPI: backend
 - React: frontend (web app)
 - Chrome extension: Manifest V3

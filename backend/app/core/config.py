@@ -9,7 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="CLEARTERMS_")
 
-    database_url: str = "sqlite+aiosqlite:///./data/clearterms.db"
+    # Dev default; set CLEARTERMS_DATABASE_URL in production. Must be an async
+    # driver URL (asyncpg) — the engine and Alembic env both run async.
+    database_url: str = (
+        "postgresql+asyncpg://clearterms:clearterms@localhost:5432/clearterms"
+    )
 
     # Dev-only default; set CLEARTERMS_JWT_SECRET (>=32 bytes) in production.
     jwt_secret: SecretStr = SecretStr("change-me")

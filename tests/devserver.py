@@ -1,8 +1,10 @@
-"""Run the backend against a real in-memory SQLite DB for frontend dev.
+"""Run the backend against a throwaway Postgres container for frontend dev.
 
-The DB repos are implemented, so this serves the actual app — auth + forum
-persist in memory for the lifetime of the process and reset on restart. No
-disk, no migrations, CWD-independent.
+Serves the real app — auth + forum + analysis persist for the lifetime of the
+process and reset on restart, because the container (and its data) is torn down
+when this exits. Matches the production database (Postgres), needs Docker, and
+is CWD-independent. No Alembic here: the schema is built directly from the ORM
+metadata, since a scratch db doesn't need migration history.
 
 Requests run through the app's own get_session, which commits on a clean
 return, so writes persist across requests with no override here.
@@ -10,6 +12,7 @@ return, so writes persist across requests with no override here.
     uv run --project backend python tests/devserver.py
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -17,31 +20,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import uvicorn
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from testcontainers.community.postgres import PostgresContainer
 
 
 def main() -> None:
-    # StaticPool keeps every checkout on one connection, so the ``:memory:`` DB
-    # survives across requests instead of vanishing when a connection recycles.
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
-    SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+    with PostgresContainer("postgres:16", driver="asyncpg") as pg:
+        url = pg.get_connection_url()
 
-    # Patch the engine before importing app.main so lifespan.init_db builds the
-    # schema on this engine rather than the on-disk default. SessionFactory needs
-    # patching too — it was bound to the on-disk engine at import time, and
-    # get_session resolves it as a module global on every request.
-    import app.db.engine as db_engine
+        # Build the schema on a throwaway engine/loop, then dispose it: the app
+        # creates its own connections inside uvicorn's event loop, and asyncpg
+        # connections cannot cross loops.
+        from app.models import Base
 
-    db_engine.engine = engine
-    db_engine.SessionFactory = SessionFactory
+        async def _create_schema() -> None:
+            engine = create_async_engine(url)
+            try:
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+            finally:
+                await engine.dispose()
 
-    from app.main import app
+        asyncio.run(_create_schema())
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+        # Patch the engine before importing app.main so lifespan.init_db (a
+        # connectivity check now) and every request use this container's db.
+        # SessionFactory needs patching too — get_session resolves it as a module
+        # global on every request.
+        import app.db.engine as db_engine
+
+        app_engine = create_async_engine(url)
+        db_engine.engine = app_engine
+        db_engine.SessionFactory = async_sessionmaker(
+            app_engine, expire_on_commit=False
+        )
+
+        from app.main import app
+
+        uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":

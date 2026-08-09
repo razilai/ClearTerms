@@ -39,8 +39,6 @@ async def get_analysis(
     document, analyses = await analysis_service.get_analysis_detail(
         session, user.id, analysis_id
     )
-    # The detail repo returns every stored version; show only the current model.
-    current = [a for a in analyses if a.model_version == settings.model_version]
     return AnalysisDetail(
         id=document.id,
         url=document.url,
@@ -57,7 +55,7 @@ async def get_analysis(
                     for f in a.findings
                 ],
             )
-            for a in current
+            for a in analyses
         ],
         model_version=settings.model_version,
         created_at=document.created_at,
