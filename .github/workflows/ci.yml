@@ -12,6 +12,12 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # The default (non-slow) test tier hits a real agent against a tiny model
+      # (see tests/conftest.py::light_agent). Pin it here so the model we pull
+      # below matches what the tests ask for. The slow tier (a live production
+      # model) stays deselected in CI by pyproject's `addopts = -m 'not slow'`.
+      CLEARTERMS_TEST_AGENT_MODEL: qwen2.5:0.5b
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +34,32 @@ jobs:
 
       - name: Mypy
         run: uv run mypy .
+
+      # --- Ollama: the test agent is real, just tiny (no fakes by design) ---
+
+      - name: Cache Ollama model
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ env.CLEARTERMS_TEST_AGENT_MODEL }}
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama
+        run: |
+          ollama serve &
+          # Wait for the HTTP API before pulling; fail fast if it never comes up.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "Ollama is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "Ollama did not become ready in time" >&2; exit 1
+
+      - name: Pull test model
+        run: ollama pull "$CLEARTERMS_TEST_AGENT_MODEL"
 
       - name: Pytest
         run: uv run pytest

@@ -241,8 +241,10 @@ async def test_like_missing_post(client: httpx.AsyncClient, auth_headers: dict) 
 # --- analysis + history + preferences ---
 #
 # Run the whole pipeline (analyze -> cache -> verdict -> history) against the
-# real repos and the dummy classifier (app.agent.classifier.analyze returns a
-# score of 1 for every category, so no Ollama is needed).
+# real repos and a real agent. Per conftest's `light_agent` fixture the model is
+# a tiny one, so a live Ollama IS required (CI installs it and pulls the model);
+# scores are therefore nondeterministic, and the assertions below check shape,
+# not fixed values.
 
 ANALYZE_BODY = {"text": "You agree to binding arbitration.", "url": "https://ex.test/tos"}
 
