@@ -122,6 +122,7 @@ async def db_connection(postgres_url: str) -> AsyncIterator[AsyncConnection]:
         await engine.dispose()
 
 
+@pytest_asyncio.fixture
 async def session(db_connection: AsyncConnection) -> AsyncIterator[AsyncSession]:
     """An AsyncSession bound to the per-test transaction (rolled back at teardown)."""
     factory = async_sessionmaker(
@@ -156,11 +157,17 @@ async def client(
         join_transaction_mode="create_savepoint",
     )
     await queue.start(worker_factory, workers=1)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    await queue.stop()
-    app.dependency_overrides.clear()
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        # try/finally, not a bare sequence: pytest throws a failing test's
+        # exception into this generator at the `yield` above, so without this
+        # both cleanup steps would be skipped — leaking a worker task whose
+        # session factory is torn down moments later.
+        await queue.stop()
+        app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture

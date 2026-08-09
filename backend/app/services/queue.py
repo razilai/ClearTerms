@@ -64,7 +64,15 @@ class AnalysisQueue:
         workers: int | None = None,
         maxsize: int | None = None,
     ) -> None:
-        """Spawn the worker pool. Idempotent-ish: call once per process."""
+        """Spawn the worker pool.
+
+        Safe to call again without an intervening stop(): a second call would
+        otherwise reassign self._queue/self._workers out from under the
+        already-running pool, leaking those tasks (they keep running, bound to
+        the old queue, but nothing can ever cancel or await them again).
+        """
+        if self._workers:
+            await self.stop()
         self._session_factory = session_factory
         self._queue = asyncio.PriorityQueue(
             maxsize=settings.analysis_queue_maxsize if maxsize is None else maxsize
@@ -98,12 +106,26 @@ class AnalysisQueue:
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
         self._pending[user_id] += 1
         entry = (self._priority_for(user_id), next(self._sequence), user_id, job, future)
-        await self._queue.put(entry)
+        try:
+            # maxsize is finite (Task 3's backpressure), so put() genuinely
+            # blocks; a caller cancelled while waiting here would otherwise
+            # leave _pending incremented forever — nothing enqueued a job for
+            # the _worker's finally block to ever decrement it.
+            await self._queue.put(entry)
+        except BaseException:
+            self._release(user_id)
+            raise
         return await future
 
     def _priority_for(self, user_id: int) -> int:
         """Lower runs sooner. Placeholder until Task 4 — see that task."""
         return 0
+
+    def _release(self, user_id: int) -> None:
+        """Undo one submit()'s pending-count increment for ``user_id``."""
+        self._pending[user_id] -= 1
+        if self._pending[user_id] <= 0:
+            del self._pending[user_id]
 
     async def _worker(self) -> None:
         assert self._queue is not None and self._session_factory is not None
@@ -128,9 +150,7 @@ class AnalysisQueue:
                 if not future.done():
                     future.set_exception(exc)
             finally:
-                self._pending[user_id] -= 1
-                if self._pending[user_id] <= 0:
-                    del self._pending[user_id]
+                self._release(user_id)
                 self._queue.task_done()
 
 
