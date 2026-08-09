@@ -837,6 +837,110 @@ async def test_submit_returns_the_result_when_it_finishes_within_the_timeout(
         await q.stop()
 
 
+async def test_a_new_users_first_job_beats_a_busy_users_backlog(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    order: list[str] = []
+    release = asyncio.Event()
+    try:
+
+        def make(label: str) -> Callable[[AsyncSession], Awaitable[None]]:
+            async def job(session: AsyncSession) -> None:
+                order.append(label)
+
+            return job
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        # Occupy the single worker so everything else genuinely queues up.
+        held = asyncio.create_task(q.submit(user_id=99, job=blocker))
+        await asyncio.sleep(0.05)
+
+        # Alice piles up four documents, then Bob submits one.
+        alice = [
+            asyncio.create_task(q.submit(user_id=1, job=make(f"alice{n}")))
+            for n in range(4)
+        ]
+        await asyncio.sleep(0.05)
+        bob = asyncio.create_task(q.submit(user_id=2, job=make("bob0")))
+        await asyncio.sleep(0.05)
+
+        release.set()
+        await asyncio.gather(held, bob, *alice)
+    finally:
+        release.set()
+        await q.stop()
+
+    # Alice's first job was already at priority 0 before Bob arrived, so it
+    # keeps its place; Bob's single job then beats alice1..alice3.
+    assert order[0] == "alice0"
+    assert order[1] == "bob0"
+    assert order[2:] == ["alice1", "alice2", "alice3"]
+
+
+async def test_pending_counter_returns_to_zero_after_jobs_finish(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A leaked counter would permanently deprioritise the user."""
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    try:
+
+        async def ok(session: AsyncSession) -> None:
+            return None
+
+        async def boom(session: AsyncSession) -> None:
+            raise ValueError("nope")
+
+        await q.submit(user_id=5, job=ok)
+        with pytest.raises(ValueError):
+            await q.submit(user_id=5, job=boom)
+    finally:
+        await q.stop()
+
+    assert q._pending == {}
+
+
+async def test_rejected_submission_does_not_leak_the_pending_counter(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A QueueFullError never reaches a worker, so it must not have counted."""
+    q = AnalysisQueue()
+    # maxsize=1, not 0 — asyncio.Queue treats maxsize=0 as *unbounded*.
+    await q.start(file_session_factory, workers=1, maxsize=1)
+    release = asyncio.Event()
+    try:
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        # Staggered with an intervening await, matching
+        # test_submit_raises_when_the_queue_is_full above: creating both
+        # back-to-back schedules them in the same event-loop tick, and the
+        # worker's wakeup (queued via the first put_nowait) is itself
+        # deferred to the *next* tick — so an unstaggered second submission
+        # can race the worker for the one slot and get rejected instead of
+        # the third.
+        first = asyncio.create_task(q.submit(user_id=5, job=blocker))
+        await asyncio.sleep(0.05)
+        second = asyncio.create_task(q.submit(user_id=5, job=blocker))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(QueueFullError):
+            await q.submit(user_id=5, job=blocker)
+
+        release.set()
+        await asyncio.gather(first, second)
+    finally:
+        release.set()
+        await q.stop()
+
+    assert q._pending == {}
+
+
 # --- analysis pipeline: get_or_create_document + queue wiring ---------------
 
 
