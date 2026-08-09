@@ -11,7 +11,9 @@ receives plain text and returns structured scores; cache/db/preferences live her
 
 import hashlib
 import unicodedata
+from functools import partial
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import classifier
@@ -37,26 +39,45 @@ async def analyze(
     normalized = normalize_text(text)
     text_hash = compute_hash(normalized)
 
+    # Read-only until the job returns: the caller must not open a write
+    # transaction it would then hold for the whole queue wait.
     document = await documents_repo.get_by_hash(session, text_hash)
-    if document is None:
-        document = await documents_repo.create(
-            session, text_hash, url, normalized, original_text=text
+    analyses: list[Analysis] = []
+    if document is not None:
+        # Cache is keyed by (document, model_version): a document analyzed under
+        # an older model has a row here but none for the current version, so an
+        # empty result is a miss just as a brand-new document is.
+        analyses = await documents_repo.get_analyses(
+            session, document.id, settings.model_version
         )
 
-    # Cache is keyed by (document, model_version): a document analyzed under an
-    # older model has a row here but none for the current version, so an empty
-    # result is a miss just as a brand-new document is.
-    analyses = await documents_repo.get_analyses(
-        session, document.id, settings.model_version
-    )
     if not analyses:
-        doc = document  # bind for the closure so the job captures this document
-        analyses = await queue.submit(user_id, lambda: run_analysis(session, doc))
+        document_id = await queue.submit(
+            user_id,
+            partial(
+                analyze_document_job,
+                text_hash=text_hash,
+                url=url,
+                normalized_text=normalized,
+                original_text=text,
+            ),
+        )
+        # The worker committed on its own session; re-read through ours so the
+        # returned rows belong to this session rather than a closed one.
+        analyses = await documents_repo.get_analyses(
+            session, document_id, settings.model_version
+        )
+    else:
+        # analyses is only ever populated inside `if document is not None`
+        # above, so reaching this branch (analyses non-empty) implies document
+        # is not None; mypy can't see that across the two separate `if`s.
+        assert document is not None
+        document_id = document.id
 
     prefs = await preferences_repo.get_for_user(session, user_id)
     verdict = compute_verdict(analyses, prefs)
-    await history_repo.append(session, user_id, document.id, verdict)
-    return verdict, document.id
+    await history_repo.append(session, user_id, document_id, verdict)
+    return verdict, document_id
 
 
 async def get_analysis_detail(
@@ -105,6 +126,62 @@ async def run_analysis(session: AsyncSession, document: Document) -> list[Analys
     ]
     await documents_repo.save_analyses(session, analyses)
     return analyses
+
+
+async def get_or_create_document(
+    session: AsyncSession,
+    text_hash: str,
+    url: str | None,
+    normalized_text: str,
+    original_text: str,
+) -> Document:
+    """Fetch the document for ``text_hash``, inserting it if it is not there yet.
+
+    Two callers can miss the cache for the same text and both enqueue a job, so
+    the insert can lose a race against the unique index on documents.text_hash.
+    The loser rolls back and re-reads rather than failing the request.
+    """
+    document = await documents_repo.get_by_hash(session, text_hash)
+    if document is not None:
+        return document
+    try:
+        return await documents_repo.create(
+            session, text_hash, url, normalized_text, original_text=original_text
+        )
+    except IntegrityError:
+        await session.rollback()
+        document = await documents_repo.get_by_hash(session, text_hash)
+        if document is None:
+            raise
+        return document
+
+
+async def analyze_document_job(
+    session: AsyncSession,
+    *,
+    text_hash: str,
+    url: str | None,
+    normalized_text: str,
+    original_text: str,
+) -> int:
+    """The unit of work the queue runs. Returns the document id.
+
+    Takes only plain data plus the session the queue hands it — deliberately no
+    reference to the caller's request session, which would otherwise stay open
+    (holding a connection, and locks) for the whole queue wait.
+
+    Re-checks the cache: by the time this runs, an identical job submitted just
+    before it may already have produced the scores.
+    """
+    document = await get_or_create_document(
+        session, text_hash, url, normalized_text, original_text
+    )
+    analyses = await documents_repo.get_analyses(
+        session, document.id, settings.model_version
+    )
+    if not analyses:
+        await run_analysis(session, document)
+    return document.id
 
 
 def normalize_text(text: str) -> str:

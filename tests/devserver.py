@@ -35,10 +35,15 @@ def main() -> None:
     SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
     # Patch the engine before importing app.main so lifespan.init_db builds the
-    # schema on this engine rather than the on-disk default.
+    # schema on this engine rather than the on-disk default. SessionFactory is
+    # a separate object bound to the on-disk engine at import time, so it needs
+    # its own patch too — app.main's lifespan now imports it directly to hand
+    # the analysis queue its worker sessions, and without this the queue would
+    # silently open ./data/clearterms.db instead of this in-memory database.
     import app.db.engine as db_engine
 
     db_engine.engine = engine
+    db_engine.SessionFactory = SessionFactory
 
     from app.db.engine import get_session
     from app.main import app

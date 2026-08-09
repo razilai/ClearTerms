@@ -64,12 +64,12 @@ def light_agent(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 @pytest_asyncio.fixture
-async def session() -> AsyncIterator[AsyncSession]:
-    """An AsyncSession on a fresh in-memory SQLite DB, isolated per test.
+async def memory_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """In-memory SQLite on a StaticPool: every session shares one connection.
 
-    StaticPool keeps every checkout on one connection, so the ``:memory:``
-    database survives across sessions within a single test instead of being
-    dropped when a pooled connection is recycled.
+    That sharing is deliberate — it is what lets a request see writes an earlier
+    request only flushed, and what makes a queue worker's session see the
+    caller's data without a commit.
     """
     engine = create_async_engine(
         "sqlite+aiosqlite://",
@@ -79,26 +79,48 @@ async def session() -> AsyncIterator[AsyncSession]:
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-
-        SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
-        async with SessionFactory() as session:
-            yield session
+        yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
         await engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def client(session: AsyncSession) -> AsyncIterator[httpx.AsyncClient]:
+async def session(
+    memory_session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    """An AsyncSession on a fresh in-memory SQLite DB, isolated per test.
+
+    StaticPool keeps every checkout on one connection, so the ``:memory:``
+    database survives across sessions within a single test instead of being
+    dropped when a pooled connection is recycled.
+    """
+    async with memory_session_factory() as session:
+        yield session
+
+
+@pytest_asyncio.fixture
+async def client(
+    session: AsyncSession,
+    memory_session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[httpx.AsyncClient]:
     from app.db.engine import get_session
     from app.main import app
+    from app.services.queue import queue
 
     async def _override_get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
     app.dependency_overrides[get_session] = _override_get_session
+    # httpx.ASGITransport does not run FastAPI's lifespan, so nothing else
+    # starts the queue for these tests. Bound to memory_session_factory (the
+    # same StaticPool connection as `session`) so a worker's writes land where
+    # the test's client can see them, and every request through this client is
+    # a real cache-miss-capable /analyze call, not just the tests that say so.
+    await queue.start(memory_session_factory, workers=1)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    await queue.stop()
     app.dependency_overrides.clear()
 
 
@@ -127,10 +149,23 @@ async def file_session_factory(
     DBAPI connection, so a worker "opening its own session" would silently share
     the caller's transaction — hiding exactly the cross-session behaviour the
     queue has to get right. A file-backed database gives real isolation.
+
+    WAL mode + a busy timeout mirror app.db.engine.init_db, which turns WAL on
+    for the production database. Without them this fixture diverges from
+    production: a second concurrent writer fails outright with "database is
+    locked" (SQLite's default rollback-journal mode has no wait semantics)
+    instead of serialising behind the first writer and then hitting the unique
+    constraint — the case get-or-create's IntegrityError recovery is written
+    for. WAL still allows only one writer at a time; the busy timeout is what
+    turns "fail immediately" into "wait, then proceed," so both are needed.
     """
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/queue.db")
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path}/queue.db",
+        connect_args={"timeout": 30},
+    )
     try:
         async with engine.begin() as conn:
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
             await conn.run_sync(Base.metadata.create_all)
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
