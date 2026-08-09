@@ -57,7 +57,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             case QueueTimeoutError():
                 return JSONResponse(
                     status_code=504,
-                    content={"detail": "Analysis timed out waiting to start"},
+                    content={
+                        "detail": "Analysis is taking longer than expected, try again shortly"
+                    },
                 )
             case _:
                 raise exc

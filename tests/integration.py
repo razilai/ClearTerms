@@ -811,7 +811,10 @@ async def test_queue_timeout_maps_to_504() -> None:
 
     resp = await _probe_app_response(QueueTimeoutError())
     assert resp.status_code == 504
-    assert resp.json()["detail"] == "Analysis timed out waiting to start"
+    assert (
+        resp.json()["detail"]
+        == "Analysis is taking longer than expected, try again shortly"
+    )
 
 
 # --- analysis pipeline through a live queue ---------------------------------

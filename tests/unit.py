@@ -814,6 +814,29 @@ async def test_timed_out_job_still_runs_and_still_caches(
         await q.stop()
 
 
+async def test_submit_returns_the_result_when_it_finishes_within_the_timeout(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The normal path: a caller waits under wait_for/shield and gets the
+    job's actual return value back, not a timeout.
+
+    timeout=1.0 vs. a ~0.02s job is a ~50x margin — comfortably deterministic
+    on any machine this suite runs on, rather than tuned close to the edge
+    the way the two timeout tests above deliberately are.
+    """
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1, timeout=1.0)
+    try:
+
+        async def job(session: AsyncSession) -> str:
+            await asyncio.sleep(0.02)
+            return "the real result"
+
+        assert await q.submit(user_id=1, job=job) == "the real result"
+    finally:
+        await q.stop()
+
+
 # --- analysis pipeline: get_or_create_document + queue wiring ---------------
 
 

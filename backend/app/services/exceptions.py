@@ -70,4 +70,9 @@ class QueueFullError(DomainError):
 
 
 class QueueTimeoutError(DomainError):
-    """Caller's wait for a queue slot expired before the job started."""
+    """Caller's wait for the analysis result expired.
+
+    The job itself is NOT cancelled — it keeps running (queued or already
+    in progress) and still populates the analysis cache, so a retry is
+    likely to be a cache hit.
+    """
