@@ -18,7 +18,7 @@ from app.db.repos import documents, history, preferences, users
 from app.models import Analysis, Document, Finding, Preference, User
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
-from app.services.exceptions import InvalidTokenError
+from app.services.exceptions import InvalidTokenError, QueueFullError, QueueTimeoutError
 from app.services.queue import AnalysisQueue
 
 
@@ -697,6 +697,107 @@ async def test_stop_cancels_workers(
     await q.start(file_session_factory, workers=2)
     await q.stop()
     assert q._workers == []
+
+
+async def test_submit_raises_when_the_queue_is_full(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1, maxsize=1)
+    release = asyncio.Event()
+    try:
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        # One job occupies the worker, one fills the single queue slot. The
+        # two submissions are staggered with an intervening await: creating
+        # both back-to-back schedules them in the same event-loop tick, and
+        # the worker's wakeup (queued via the first put_nowait) is itself
+        # deferred to the *next* tick — so an unstaggered second submission
+        # can race the worker for the one slot and get rejected instead of
+        # the third.
+        first = asyncio.create_task(q.submit(user_id=1, job=blocker))
+        await asyncio.sleep(0.05)
+        second = asyncio.create_task(q.submit(user_id=2, job=blocker))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(QueueFullError):
+            await q.submit(user_id=3, job=blocker)
+
+        release.set()
+        await asyncio.gather(first, second)
+    finally:
+        release.set()
+        await q.stop()
+
+
+async def test_submit_raises_when_the_wait_exceeds_the_timeout(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1, timeout=0.05)
+    release = asyncio.Event()
+    try:
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        first = asyncio.create_task(q.submit(user_id=1, job=blocker))
+        await asyncio.sleep(0.01)
+
+        async def quick(session: AsyncSession) -> str:
+            return "never seen"
+
+        with pytest.raises(QueueTimeoutError):
+            await q.submit(user_id=2, job=quick)
+
+        release.set()
+        # first's own caller-side wait times out too: it has been waiting
+        # since before the initial sleep, so its 0.05s deadline elapses
+        # before the second submission's later deadline does — the timeout
+        # applies uniformly to every caller, not just ones still queued.
+        with pytest.raises(QueueTimeoutError):
+            await first
+    finally:
+        release.set()
+        await q.stop()
+
+
+async def test_timed_out_job_still_runs_and_still_caches(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Giving up on the wait must not throw away the work already queued."""
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1, timeout=0.05)
+    release = asyncio.Event()
+    ran = asyncio.Event()
+    try:
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        async def later(session: AsyncSession) -> None:
+            ran.set()
+
+        first = asyncio.create_task(q.submit(user_id=1, job=blocker))
+        await asyncio.sleep(0.01)
+
+        with pytest.raises(QueueTimeoutError):
+            await q.submit(user_id=2, job=later)
+
+        release.set()
+        # first's own caller-side wait times out too, same reasoning as
+        # above — its deadline elapses before release.set() is even called.
+        # The job itself (blocker) keeps running regardless (shielded); it
+        # is the later job's persistence past its own caller's timeout that
+        # this test is really about.
+        with pytest.raises(QueueTimeoutError):
+            await first
+        await asyncio.wait_for(ran.wait(), timeout=1.0)
+    finally:
+        release.set()
+        await q.stop()
 
 
 # --- analysis pipeline: get_or_create_document + queue wiring ---------------
