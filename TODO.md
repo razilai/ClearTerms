@@ -13,11 +13,6 @@
 - how does indexing work?
 - moving to postgres
 - field validation (length, size)
-- wire the request-transaction boundary: repos only flush, nothing commits, so
-  writes never persist across requests. Tests hide it (one shared session);
-  tests/devserver.py works around it with a committing session override. Decide
-  the owner (get_session commit-on-success, or per-service commits) and drop the
-  devserver override once done.
 
 ## agent
 

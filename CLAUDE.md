@@ -34,7 +34,7 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage
     components/ CommentItem
 tests/          test tiers: unit.py, integration.py, system.py
-                + devserver.py (fake-backed uvicorn for frontend dev)
+                + devserver.py (uvicorn on in-memory SQLite for frontend dev)
 docker-compose.yml, backend/Dockerfile
 ```
 
