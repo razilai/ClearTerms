@@ -131,8 +131,14 @@ class AnalysisQueue:
             raise QueueTimeoutError() from None
 
     def _priority_for(self, user_id: int) -> int:
-        """Lower runs sooner. Placeholder until Task 4 — see that task."""
-        return 0
+        """Lower runs sooner: a user's Nth in-flight job sits at priority N.
+
+        So every user's first job outranks every user's second, and a burst from
+        one user cannot make everyone else wait behind all of it. Cannot starve
+        anyone — a job at priority N waits only behind jobs at priority < N, and
+        each user contributes at most one job to each of those levels.
+        """
+        return self._pending[user_id]
 
     def _release(self, user_id: int) -> None:
         """Undo one submit()'s pending-count increment for ``user_id``."""
