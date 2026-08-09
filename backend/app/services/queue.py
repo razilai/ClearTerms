@@ -26,6 +26,7 @@ from typing import TypeVar
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.services.exceptions import QueueFullError, QueueTimeoutError
 
 T = TypeVar("T")
 
@@ -56,6 +57,7 @@ class AnalysisQueue:
         self._sequence = itertools.count()
         # In-flight jobs per user (queued + running); the priority policy.
         self._pending: defaultdict[int, int] = defaultdict(int)
+        self._timeout: float = settings.analysis_queue_timeout_seconds
 
     async def start(
         self,
@@ -63,6 +65,7 @@ class AnalysisQueue:
         *,
         workers: int | None = None,
         maxsize: int | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Spawn the worker pool.
 
@@ -76,6 +79,9 @@ class AnalysisQueue:
         self._session_factory = session_factory
         self._queue = asyncio.PriorityQueue(
             maxsize=settings.analysis_queue_maxsize if maxsize is None else maxsize
+        )
+        self._timeout = (
+            settings.analysis_queue_timeout_seconds if timeout is None else timeout
         )
         count = settings.analysis_workers if workers is None else workers
         self._workers = [
@@ -104,18 +110,25 @@ class AnalysisQueue:
             raise RuntimeError("AnalysisQueue.start() was never called")
 
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
-        self._pending[user_id] += 1
         entry = (self._priority_for(user_id), next(self._sequence), user_id, job, future)
         try:
-            # maxsize is finite (Task 3's backpressure), so put() genuinely
-            # blocks; a caller cancelled while waiting here would otherwise
-            # leave _pending incremented forever — nothing enqueued a job for
-            # the _worker's finally block to ever decrement it.
-            await self._queue.put(entry)
-        except BaseException:
-            self._release(user_id)
-            raise
-        return await future
+            # Non-blocking: a caller that cannot even get a queue slot is shed
+            # immediately rather than made to wait for the right to wait.
+            self._queue.put_nowait(entry)
+        except asyncio.QueueFull:
+            raise QueueFullError() from None
+        # Only counted once the job is actually queued: a rejected submission
+        # never reaches the worker's finally, so counting it here would leak
+        # _pending upward forever and permanently deprioritise this user.
+        self._pending[user_id] += 1
+
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), self._timeout)
+        except TimeoutError:
+            # shield keeps the job alive: it stays queued, runs, and populates
+            # the analysis cache even though this caller stopped waiting. The
+            # next request for the same document is then a cache hit.
+            raise QueueTimeoutError() from None
 
     def _priority_for(self, user_id: int) -> int:
         """Lower runs sooner. Placeholder until Task 4 — see that task."""
