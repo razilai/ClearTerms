@@ -12,16 +12,54 @@ needing a commit (the app's repos flush; the request transaction boundary is
 not wired yet).
 """
 
-from collections.abc import AsyncIterator
+import os
+from collections.abc import AsyncIterator, Iterator
 
 import httpx
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.agent import classifier
+from app.core.config import settings
+
 # Importing Base from app.models (rather than app.models.base) also registers
 # every table on Base.metadata, which create_all below depends on.
 from app.models import Base
+
+# The production model (qwen3:4b) is a thinking model: minutes per call on a
+# laptop CPU. The default tiers still hit a real agent — no fakes — but against
+# a tiny instruct model, so a full run stays under a minute. The `slow` tier
+# (tests/system.py) keeps exercising settings.agent_model to prove the real
+# model still works. Override with CLEARTERMS_TEST_AGENT_MODEL if you prefer
+# another small model you already have pulled.
+LIGHT_MODEL = os.environ.get("CLEARTERMS_TEST_AGENT_MODEL", "qwen2.5:0.5b")
+
+
+@pytest.fixture(autouse=True)
+def light_agent(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Point the agent at a small, fast model for every non-``slow`` test.
+
+    ``slow`` tests opt out and run against the production ``settings.agent_model``
+    so the real model stays covered. ``build_agent`` is ``lru_cache``d and reads
+    the model name once, so the cache is cleared around the override to force a
+    rebuild against the right model.
+    """
+    if request.node.get_closest_marker("slow"):
+        yield
+        return
+    original_model = settings.agent_model
+    original_version = settings.model_version
+    settings.agent_model = LIGHT_MODEL
+    settings.model_version = f"test-{LIGHT_MODEL}"
+    classifier.build_agent.cache_clear()
+    try:
+        yield
+    finally:
+        settings.agent_model = original_model
+        settings.model_version = original_version
+        classifier.build_agent.cache_clear()
 
 
 @pytest_asyncio.fixture
