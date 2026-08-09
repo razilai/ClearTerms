@@ -26,8 +26,12 @@ class FindingOut(BaseModel):
 
 
 class CategoryScore(BaseModel):
-    category: str  # TODO: should this be an enum?
-    score: int  # TODO: should this be limited to some score range?
+    # ``category``/``score`` stay str/int rather than ClauseCategory/Literal:
+    # this mirrors the ``Analysis`` row's plain columns, so a detail response for
+    # a document scored under an older, since-renamed slug still serializes
+    # instead of 500ing on a value the current enum no longer names.
+    category: str
+    score: int
     # Every clause found for this category, not just the worst — ``score`` is
     # their max. Defaults to empty so an absent category serializes as [], not
     # null, and callers can iterate without a null check.
@@ -39,9 +43,10 @@ class VerdictResponse(BaseModel):
     analysis_id: int
 
 
-# NOTE: this is the final output of the analysis,
-# TODO: is ID redundant? it might be more relevant to the database models, but here we are just returning the analysis object
-#       did not remove this yet, but should be addressed
+# Final output of GET /analyses/{id}. ``id`` is the document id (the cache is
+# keyed per document, so analysis_id == document_id); kept in the body so the
+# response is self-describing and the frontend can link/key on it without
+# threading the path param back through.
 class AnalysisDetail(BaseModel):
     id: int
     url: str | None
@@ -50,9 +55,10 @@ class AnalysisDetail(BaseModel):
     created_at: datetime
 
 
-# moved from agent/output.py here to stay consistant with pydantic schemas
-
-
+# Canonical definition of the clause taxonomy. Lives here (a pure leaf) so the
+# model-facing Finding schema below and the wire contracts stay free of
+# app.agent.categories' import-time TOML loading; that module re-exports this
+# and owns the surrounding prose/score anchors.
 class ClauseCategory(StrEnum):
     UNILATERAL_CHANGES = "unilateral_changes"
     ARBITRATION = "arbitration"

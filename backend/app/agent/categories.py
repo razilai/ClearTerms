@@ -1,11 +1,14 @@
 """Clause category taxonomy: the fixed label set every TOS is scored against.
 
-Single source of truth for:
+``ClauseCategory`` itself lives in ``app.schemas.analysis`` (a pure leaf, so the
+wire contracts stay free of this module's import-time TOML loading) and is
+re-exported here. Those slugs are stored verbatim in ``Analysis.category`` and
+``Preference.category`` — both plain ``String(64)`` columns with no FK — so the
+enum is what keeps them aligned: renaming a slug invalidates cached analyses and
+orphans existing preference rows.
 
-- the category slugs stored in ``Analysis.category`` and ``Preference.category``
-  (both plain ``String(64)`` columns with no FK — this enum is what keeps them
-  aligned, so renaming a slug invalidates cached analyses and orphans existing
-  preference rows),
+This module is the single source of truth for the prose around that enum:
+
 - the neutral detection definitions and 0-2 score anchors rendered into the
   classifier system prompt,
 - the user-facing display copy shown in the web app's per-clause breakdown.
@@ -17,28 +20,19 @@ scale to all 2s. ``display_name``/``description`` carry the product voice and
 go to humans.
 
 The prose itself lives in ``prompts/categories.toml``, one table per slug; this
-module owns the enum, the score scale, and the schema, and loads + validates the
-prose at import. Few-shot examples live in ``prompts/prompts.toml``, keyed by
-these slugs. This module holds data only; rendering it into a prompt is
+module owns the score scale and the ``CategorySpec`` schema, and loads +
+validates the prose at import. Few-shot examples live in ``prompts/prompts.toml``,
+keyed by these slugs. This module holds data only; rendering it into a prompt is
 ``classifier.py``'s job.
 """
 
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
-from enum import StrEnum
 from importlib import resources
 from types import MappingProxyType
 
-
-class ClauseCategory(StrEnum):
-    UNILATERAL_CHANGES = "unilateral_changes"
-    ARBITRATION = "arbitration"
-    LIABILITY = "liability"
-    CONTENT_LICENSING = "content_licensing"
-    DATA_COLLECTION = "data_collection"
-    TERMINATION = "termination"
-
+from app.schemas.analysis import ClauseCategory
 
 SCORE_ABSENT = 0
 SCORE_STANDARD = 1

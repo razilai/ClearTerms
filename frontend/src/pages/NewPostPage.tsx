@@ -68,7 +68,7 @@ export function NewPostPage() {
           />
           <TextInput
             label="Category"
-            description="Optional, e.g. arbitration, data-selling"
+            description="Optional, e.g. arbitration, data collection"
             maxLength={64}
             mt="md"
             {...form.getInputProps('category')}

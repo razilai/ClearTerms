@@ -1,25 +1,27 @@
-"""Async engine / session setup for SQLite (aiosqlite)."""
+"""Async engine / session setup for PostgreSQL (asyncpg)."""
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 
-engine = create_async_engine(settings.database_url)
+# pool_pre_ping recycles connections the server dropped (idle timeouts, restarts)
+# instead of handing a dead one to the first request after the gap.
+engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def init_db() -> None:
-    """Create tables from Base.metadata and enable SQLite WAL mode."""
-    # Imported for the side effect of registering every table on Base.metadata.
-    import app.models  # noqa: F401
-    from app.models.base import Base
+    """Verify the database is reachable at startup.
 
-    async with engine.begin() as conn:
-        if engine.dialect.name == "sqlite":
-            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-        await conn.run_sync(Base.metadata.create_all)
+    Schema is owned by Alembic (``alembic upgrade head``), run as a deploy step —
+    not created here. This only opens a connection so lifespan fails fast if the
+    database is down rather than 500ing on the first request.
+    """
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

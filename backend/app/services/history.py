@@ -24,11 +24,3 @@ async def list_history(session: AsyncSession, user_id: int) -> list[HistoryEntry
         )
         for entry in entries
     ]
-
-
-async def append_entry(
-    session: AsyncSession, user_id: int, document_id: int, verdict: str
-) -> None:
-    # Unused for now: the analysis pipeline appends via history_repo.append
-    # directly. Kept so a future caller (e.g. a re-verdict flow) has a service seam.
-    await history_repo.append(session, user_id, document_id, verdict)

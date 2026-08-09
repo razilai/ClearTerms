@@ -26,7 +26,7 @@ backend/        FastAPI backend
     models/     SQLAlchemy ORM entities
     schemas/    Pydantic wire contracts, decoupled from models
     core/       settings, logging — leaf layer, imports from none of the above
-  data/         runtime SQLite db (gitignored)
+  alembic/      migrations (env.py wired to settings + Base.metadata)
 frontend/       React web app (Vite + TS + Mantine + TanStack Query)
   src/
     api/        types.ts (schema mirrors), client.ts (fetch wrapper), auth.ts, forum.ts
@@ -34,7 +34,7 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage
     components/ CommentItem
 tests/          test tiers: unit.py, integration.py, system.py
-                + devserver.py (uvicorn on in-memory SQLite for frontend dev)
+                + devserver.py (uvicorn on a throwaway Postgres container for frontend dev)
 docker-compose.yml, backend/Dockerfile
 ```
 
@@ -56,7 +56,7 @@ core  (shared leaf; imports from none of the above)
 
 Backend covers auth, forum, and the analysis pipeline (analyze + history +
 preferences); the web app frontend covers all of these. The Chrome extension
-does **not exist yet**, and the agent still returns dummy scores (see below).
+does **not exist yet** (see stubbed list below).
 
 **Implemented:**
 - **Auth** (`services/auth.py`, `api/auth.py`): signup, login, JWT issue/verify.
@@ -75,7 +75,7 @@ does **not exist yet**, and the agent still returns dummy scores (see below).
   (normalize → hash → cache lookup → verdict + history append) and `GET
   /analyses/{id}` (per-category breakdown). `analysis_id` in the response *is* the
   `document_id` — the cache is keyed per document. `run_analysis` calls the agent
-  (currently dummy) and persists one `Analysis` row per category.
+  and persists one `Analysis` row (plus its `Finding`s) per category.
 - **History** (`services/history.py`, `api/history.py`): `GET /history` — every doc
   the user has had reviewed, newest first, with the document url joined in (service
   returns the API schema, like forum).
@@ -95,21 +95,36 @@ does **not exist yet**, and the agent still returns dummy scores (see below).
   user liked the post, so the like button has no initial pressed-state.
 
 **Stubbed / not implemented:**
-- **Agent** (`agent/classifier.py::analyze`) returns dummy scores (1 for every
-  category) so the pipeline runs end-to-end without Ollama — the real chunk-and-
-  classify path is still TODO.
 - **Priority queue** (`services/queue.py`): `submit` runs the job inline; per-user
   priority scheduling is a later phase.
+- **Logging** (`core/logging.py::setup_logging`) is a no-op — wired into lifespan
+  but not configured yet.
 - `services/forum.py::check_rate_limit` raises `NotImplementedError` (phase-2
   guardrail, not wired yet).
+
+The agent (`agent/classifier.py::analyze`) is fully implemented: chunk →
+classify each chunk against Ollama → verbatim-evidence check → densify to one
+score per category. It needs a live Ollama; tests run it against a tiny model.
 
 ## Working on the backend
 
 ```bash
 cd backend
 uv sync
-uv run uvicorn app.main:app --reload      # GET /health → {"status":"ok"}
+docker compose up -d db                    # Postgres 16 on :5432 (from repo root)
+uv run alembic upgrade head                # apply migrations to the fresh db
+uv run uvicorn app.main:app --reload       # GET /health → {"status":"ok"}
 ```
+
+The db is Postgres. `init_db` only pings it at startup — the schema is owned by
+**Alembic**, not `create_all`. After changing a model:
+
+```bash
+uv run alembic revision --autogenerate -m "what changed"   # review the output
+uv run alembic upgrade head
+```
+
+An autogenerate that produces an empty migration means the db matches the models.
 
 Lint / typecheck / test:
 ```bash
@@ -131,9 +146,10 @@ npm run build      # tsc -b && vite build — this is the typecheck gate
 npm run lint       # oxlint
 ```
 
-A plain `uvicorn app.main:app` points at the on-disk `data/` SQLite db and is
-CWD-relative, so 500s if run from the wrong dir. For frontend dev, run the
-backend against a real in-memory SQLite db instead (state resets on restart):
+A plain `uvicorn app.main:app` needs the compose Postgres up and migrations
+applied. For frontend dev, `devserver.py` instead spins up a throwaway Postgres
+container (testcontainers), builds the schema from the ORM metadata, and serves
+the real app — state resets when the process exits. Needs Docker:
 
 ```bash
 uv run --project backend python tests/devserver.py    # from repo root
@@ -141,21 +157,26 @@ uv run --project backend python tests/devserver.py    # from repo root
 
 ## Testing notes
 
-- Tests run against a real in-memory SQLite db (aiosqlite + `StaticPool`), not
-  fakes. `conftest.py`'s `session` fixture builds a fresh schema per test; the
-  `client` fixture overrides the session dependency to hand every request that
-  same session, so writes stay visible across requests without a commit.
-- Fixtures: `session` (AsyncSession on a fresh db), `client` (httpx
-  ASGITransport), `auth_headers` (signs up alice@example.com, returns a Bearer
-  header). `signup_headers(client, email)` mints a header for any email.
+- Tests run against a real **Postgres** database in a throwaway container
+  (testcontainers), matching prod — no SQLite, so dialect differences (FK
+  enforcement, types) can't hide until runtime. One container per session; the
+  schema is built once. Per-test isolation is an outer transaction that is always
+  rolled back, so tests never see each other's rows (schema is never rebuilt).
+- Fixtures: `session` (AsyncSession bound to the per-test transaction), `client`
+  (httpx ASGITransport; overrides `get_session` to share `session`, so flushes
+  are visible across requests without a commit), `committing_client` (each
+  request gets its own committing session on the shared connection — tests the
+  real transaction boundary), `auth_headers` (signs up alice@example.com). Needs
+  Docker; CI runs on `ubuntu-latest` which has it.
 - Testing strategy is **hybrid**: test-first for backend logic (analysis
   pipeline, preference matching, API contracts); build-first for UI/extension.
 
 ## Stack
 
-FastAPI · SQLAlchemy 2.0 async + aiosqlite · Pydantic v2 · PyJWT · pwdlib[argon2]
-· PydanticAI + Ollama (Qwen2.5-7B-Instruct) · uv for deps · ruff + mypy.
-SQLite for MVP (revisit Postgres if the analysis queue + forum contend on writes).
+FastAPI · SQLAlchemy 2.0 async + asyncpg · Alembic · Pydantic v2 · PyJWT ·
+pwdlib[argon2] · PydanticAI + Ollama (Qwen2.5-7B-Instruct) · uv for deps · ruff +
+mypy. **PostgreSQL** (`docker-compose.yml` runs postgres:16); tests + devserver
+use testcontainers.
 
 ## Conventions
 

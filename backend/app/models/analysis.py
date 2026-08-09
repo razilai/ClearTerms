@@ -23,8 +23,8 @@ class Analysis(Base):
     # independent: it means nothing apart from its Analysis, shares its cache
     # key, and dies with it. That is composition, so the ORM may own the link.
     #
-    # - delete-orphan cascades in Python, so it works on SQLite even though this
-    #   app never sets PRAGMA foreign_keys=ON.
+    # - delete-orphan cascades in Python for session-tracked deletes; the FK's
+    #   ondelete="CASCADE" (see Finding) is the db-level backstop on Postgres.
     # - order_by keeps insert order on read; densify's finding order is part of
     #   the agent contract, and callers should not have to remember to sort.
     # - lazy="raise" because implicit lazy loads are unusable under async — they

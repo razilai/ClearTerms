@@ -50,8 +50,9 @@ async def analyze(
         session, document.id, settings.model_version
     )
     if not analyses:
-        doc = document  # bind for the closure so the job captures this document
-        analyses = await queue.submit(user_id, lambda: run_analysis(session, doc))
+        analyses = await queue.submit(
+            user_id, lambda: run_analysis(session, document)
+        )
 
     prefs = await preferences_repo.get_for_user(session, user_id)
     verdict = compute_verdict(analyses, prefs)
@@ -64,13 +65,17 @@ async def get_analysis_detail(
 ) -> tuple[Document, list[Analysis]]:
     """Per-category breakdown for GET /analyses/{id}; raise if not found.
 
-    Analyses are a shared cache, not per-user rows, so there is no ownership
-    check here — auth alone gates the route.
+    Returns only the rows for the current model_version — the detail view shows
+    one score per category, and old versions linger in the cache after a
+    model/prompt bump. Analyses are a shared cache, not per-user rows, so there
+    is no ownership check here — auth alone gates the route.
     """
     found = await documents_repo.get_document_with_analyses(session, document_id)
     if found is None:
         raise NotFoundError("analysis")
-    return found
+    document, analyses = found
+    current = [a for a in analyses if a.model_version == settings.model_version]
+    return document, current
 
 
 async def run_analysis(session: AsyncSession, document: Document) -> list[Analysis]:

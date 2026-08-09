@@ -71,7 +71,8 @@ examples here.
 ### `app/db/`
 
 Persistence layer. Engine/session setup and data access. **Accessed only
-through services** — api routes never touch the db directly. SQLite for MVP.
+through services** — api routes never touch the db directly. PostgreSQL, with
+Alembic migrations (`alembic upgrade head`); `init_db` only pings at startup.
 
 ### `app/models/`
 
@@ -91,7 +92,8 @@ nothing here may import from `api`, `services`, `agent`, or `db`.
 
 ### `data/`
 
-Runtime data (SQLite db file, etc.). Not source. Keep out of version control.
+Runtime data. Not source. Keep out of version control. (Postgres data lives in
+the `pgdata` docker volume, not here.)
 
 ## Build files
 

@@ -26,9 +26,10 @@ class Finding(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     analysis_id: Mapped[int] = mapped_column(
-        # CASCADE is declared for the day analyses are pruned (a model_version
-        # sweep) and for Postgres. SQLite does not enforce it unless
-        # PRAGMA foreign_keys=ON, which this app does not set.
+        # CASCADE is enforced by Postgres: deleting an Analysis (a model_version
+        # sweep) drops its findings at the db level. The ORM's delete-orphan
+        # (see Analysis.findings) covers the same in Python for session-tracked
+        # deletes; both point the same way.
         ForeignKey("analyses.id", ondelete="CASCADE"),
         index=True,
     )
