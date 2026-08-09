@@ -117,11 +117,17 @@ async def client(
     # the test's client can see them, and every request through this client is
     # a real cache-miss-capable /analyze call, not just the tests that say so.
     await queue.start(memory_session_factory, workers=1)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    await queue.stop()
-    app.dependency_overrides.clear()
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        # try/finally, not a bare sequence: pytest throws a failing test's
+        # exception into this generator at the `yield` above, so without this
+        # both cleanup steps would be skipped — leaking a worker task bound to
+        # a memory_session_factory whose engine gets disposed moments later.
+        await queue.stop()
+        app.dependency_overrides.clear()
 
 
 async def signup_headers(
