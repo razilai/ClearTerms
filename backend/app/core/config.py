@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     chunk_tokens: int = 3000
     chunk_overlap_tokens: int = 200
 
+    # Concurrent analyses. One LLM generation already saturates a laptop CPU;
+    # raise only when the GPU VM can serve more than one at a time.
+    analysis_workers: int = 1
+    # Waiting jobs allowed before /analyze sheds load with a 503. Sized so a
+    # queued caller's wait stays bounded by maxsize x per-job time.
+    analysis_queue_maxsize: int = 100
+    # How long a caller waits for its turn before giving up with a 504. The job
+    # itself is NOT cancelled — it keeps running and still populates the cache.
+    analysis_queue_timeout_seconds: float = 300.0
+
 
 @lru_cache
 def get_settings() -> Settings:
