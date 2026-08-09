@@ -253,8 +253,8 @@ async def test_analyze_returns_verdict_and_id(
     resp = await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # Dummy scores are all 1 (standard), so with default weights the verdict is up.
-    assert body["verdict"] == "up"
+    # Live agent scores are nondeterministic; assert shape, not a fixed verdict.
+    assert body["verdict"] in {"up", "down"}
     assert isinstance(body["analysis_id"], int)
 
 
@@ -285,9 +285,10 @@ async def test_analysis_detail(client: httpx.AsyncClient, auth_headers: dict) ->
     body = resp.json()
     assert body["id"] == analysis_id
     assert body["url"] == "https://ex.test/tos"
-    # One CategoryScore per clause category from the dummy classifier.
+    # One CategoryScore per clause category.
     assert len(body["scores"]) == 6
-    assert {s["score"] for s in body["scores"]} == {1}
+    # Live agent scores are nondeterministic; each must be on the 0-2 scale.
+    assert {s["score"] for s in body["scores"]} <= {0, 1, 2}
 
 
 async def test_analysis_detail_missing(
@@ -307,7 +308,7 @@ async def test_history_lists_analyzed_documents(
     entries = resp.json()["entries"]
     assert len(entries) == 1
     assert entries[0]["url"] == "https://ex.test/tos"
-    assert entries[0]["verdict"] == "up"
+    assert entries[0]["verdict"] in {"up", "down"}
 
 
 async def test_history_empty_for_new_user(
