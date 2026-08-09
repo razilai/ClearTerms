@@ -15,7 +15,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import {
@@ -24,9 +24,10 @@ import {
   deletePost,
   editComment,
   getPost,
+  listComments,
   toggleLike,
 } from '../api/forum'
-import type { LikeResponse, PostDetail } from '../api/types'
+import type { CommentOut, LikeResponse, PostDetail } from '../api/types'
 import { useAuth } from '../auth/useAuth'
 import { CategoryChip } from '../components/CategoryChip'
 import { CommentItem } from '../components/CommentItem'
@@ -53,6 +54,34 @@ export function PostDetailPage() {
     isPending,
     error,
   } = useQuery({ queryKey: postKey, queryFn: () => getPost(postId) })
+
+  // The post detail ships the first keyset page of comments; further pages are
+  // pulled on demand and appended here. Reset whenever the post (re)loads, so a
+  // refetch after posting a comment starts from a fresh first page.
+  const [extraComments, setExtraComments] = useState<CommentOut[]>([])
+  const [commentsCursor, setCommentsCursor] = useState<string | null>(null)
+  const [loadingComments, setLoadingComments] = useState(false)
+
+  useEffect(() => {
+    if (post) {
+      setExtraComments([])
+      setCommentsCursor(post.comments_next_cursor)
+    }
+  }, [post])
+
+  const loadMoreComments = async () => {
+    if (!commentsCursor) return
+    setLoadingComments(true)
+    try {
+      const page = await listComments(postId, commentsCursor)
+      setExtraComments((prev) => [...prev, ...page.items])
+      setCommentsCursor(page.next_cursor)
+    } catch (err) {
+      showError(err as Error)
+    } finally {
+      setLoadingComments(false)
+    }
+  }
 
   const invalidatePost = () => {
     queryClient.invalidateQueries({ queryKey: postKey })
@@ -127,6 +156,7 @@ export function PostDetailPage() {
   }
 
   const isOwnPost = post.author_email === email
+  const comments = [...post.comments, ...extraComments]
 
   return (
     <Container size="md">
@@ -178,10 +208,11 @@ export function PostDetailPage() {
       </Paper>
 
       <Title order={4} mt="xl" mb="sm">
-        Comments ({post.comments.length})
+        Comments ({comments.length}
+        {commentsCursor ? '+' : ''})
       </Title>
       <Stack gap="sm">
-        {post.comments.map((comment) => (
+        {comments.map((comment) => (
           <CommentItem
             key={comment.id}
             comment={comment}
@@ -195,6 +226,18 @@ export function PostDetailPage() {
             onDelete={() => deleteCommentMutation.mutate(comment.id)}
           />
         ))}
+        {commentsCursor && (
+          <Center>
+            <Button
+              variant="subtle"
+              size="xs"
+              loading={loadingComments}
+              onClick={loadMoreComments}
+            >
+              Load more comments
+            </Button>
+          </Center>
+        )}
       </Stack>
 
       <Paper withBorder p="md" mt="md">

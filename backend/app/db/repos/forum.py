@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Comment, Like, Post
@@ -29,16 +29,25 @@ async def get_post(session: AsyncSession, post_id: int) -> Post | None:
     return await session.get(Post, post_id)
 
 
-async def list_posts(session: AsyncSession) -> list[Post]:
-    result = await session.execute(select(Post).order_by(Post.created_at.desc()))
+async def list_posts(
+    session: AsyncSession,
+    limit: int,
+    cursor: tuple[datetime, int] | None = None,
+) -> list[Post]:
+    """One keyset page of posts, newest first. Fetches ``limit + 1`` so the
+    caller can detect a further page. Uses the ``ix_posts_created_id`` index.
+    """
+    stmt = select(Post)
+    if cursor is not None:
+        stmt = stmt.where(tuple_(Post.created_at, Post.id) < cursor)
+    stmt = stmt.order_by(Post.created_at.desc(), Post.id.desc()).limit(limit + 1)
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
 async def delete_post(session: AsyncSession, post_id: int) -> None:
-    # No DB-level cascade on the FKs, so clear children first to avoid dangling
-    # rows / FK violations.
-    await session.execute(delete(Like).where(Like.post_id == post_id))
-    await session.execute(delete(Comment).where(Comment.post_id == post_id))
+    # ondelete=CASCADE on comments.post_id / likes.post_id (see app.models.forum)
+    # drops the children at the db level, so one DELETE is enough.
     await session.execute(delete(Post).where(Post.id == post_id))
     await session.flush()
 
@@ -56,12 +65,22 @@ async def get_comment(session: AsyncSession, comment_id: int) -> Comment | None:
     return await session.get(Comment, comment_id)
 
 
-async def list_comments(session: AsyncSession, post_id: int) -> list[Comment]:
-    result = await session.execute(
-        select(Comment)
-        .where(Comment.post_id == post_id)
-        .order_by(Comment.created_at.asc())
-    )
+async def list_comments(
+    session: AsyncSession,
+    post_id: int,
+    limit: int,
+    cursor: tuple[datetime, int] | None = None,
+) -> list[Comment]:
+    """One keyset page of a post's comments, oldest first (chronological read).
+
+    Ascending keyset: the next page is rows strictly *after* the cursor's
+    ``(created_at, id)``. Fetches ``limit + 1``; uses ``ix_comments_post_created_id``.
+    """
+    stmt = select(Comment).where(Comment.post_id == post_id)
+    if cursor is not None:
+        stmt = stmt.where(tuple_(Comment.created_at, Comment.id) > cursor)
+    stmt = stmt.order_by(Comment.created_at.asc(), Comment.id.asc()).limit(limit + 1)
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 

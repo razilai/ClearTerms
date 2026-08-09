@@ -9,7 +9,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { isNotReady } from '../api/client'
@@ -19,10 +19,20 @@ import { PageHeader } from '../components/PageHeader'
 import { VerdictStamp } from '../components/VerdictStamp'
 
 export function HistoryPage() {
-  const { data, isPending, error } = useQuery({
+  const {
+    data,
+    isPending,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['history'],
-    queryFn: getHistory,
+    queryFn: ({ pageParam }) => getHistory(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
   })
+  const entries = data?.pages.flatMap((page) => page.items) ?? []
 
   if (isPending) {
     return (
@@ -53,7 +63,7 @@ export function HistoryPage() {
         title="History"
         description="Every terms-of-service document you've had reviewed."
       />
-      {data.entries.length === 0 ? (
+      {entries.length === 0 ? (
         <Stack align="center" mt="xl" gap="sm">
           <Text c="ink.6">No documents reviewed yet.</Text>
           <Button component={Link} to="/analyze" variant="light">
@@ -62,7 +72,7 @@ export function HistoryPage() {
         </Stack>
       ) : (
         <Stack gap="xs">
-          {data.entries.map((entry) => (
+          {entries.map((entry) => (
             <Paper
               key={entry.document_id}
               withBorder
@@ -89,6 +99,17 @@ export function HistoryPage() {
               </Group>
             </Paper>
           ))}
+          {hasNextPage && (
+            <Center mt="sm">
+              <Button
+                variant="subtle"
+                onClick={() => fetchNextPage()}
+                loading={isFetchingNextPage}
+              >
+                Load more
+              </Button>
+            </Center>
+          )}
         </Stack>
       )}
     </Container>

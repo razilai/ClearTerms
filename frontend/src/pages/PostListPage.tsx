@@ -9,7 +9,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { listPosts } from '../api/forum'
@@ -18,10 +18,19 @@ import { PageHeader } from '../components/PageHeader'
 
 export function PostListPage() {
   const {
-    data: posts,
+    data,
     isPending,
     error,
-  } = useQuery({ queryKey: ['posts'], queryFn: listPosts })
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['posts'],
+    queryFn: ({ pageParam }) => listPosts(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  })
+  const posts = data?.pages.flatMap((page) => page.items) ?? []
 
   if (isPending) {
     return (
@@ -90,6 +99,17 @@ export function PostListPage() {
               </Group>
             </Card>
           ))}
+          {hasNextPage && (
+            <Center mt="sm">
+              <Button
+                variant="subtle"
+                onClick={() => fetchNextPage()}
+                loading={isFetchingNextPage}
+              >
+                Load more
+              </Button>
+            </Center>
+          )}
         </Stack>
       )}
     </Container>

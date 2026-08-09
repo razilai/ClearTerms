@@ -210,11 +210,17 @@ async def test_create_document_populates_id(session: AsyncSession) -> None:
     assert doc.id is not None, "flush should populate the PK"
 
 
-async def test_create_document_duplicate_hash_raises(session: AsyncSession) -> None:
-    await documents.create(session, "hash-a", None, "normalized text")
+async def test_create_document_duplicate_hash_returns_existing(
+    session: AsyncSession,
+) -> None:
+    # Two concurrent analyses of the same TOS both miss the cache and reach
+    # create(); ON CONFLICT makes the loser return the winner's row instead of
+    # raising a unique violation. The loser's payload is dropped.
+    first = await documents.create(session, "hash-a", None, "normalized text")
+    second = await documents.create(session, "hash-a", None, "different text")
 
-    with pytest.raises(IntegrityError):
-        await documents.create(session, "hash-a", None, "different text")
+    assert second.id == first.id
+    assert second.normalized_text == "normalized text"
 
 
 async def test_save_and_get_analyses_round_trip(session: AsyncSession) -> None:
@@ -252,13 +258,21 @@ async def test_get_analyses_filters_by_model_version(session: AsyncSession) -> N
     assert [(a.model_version, a.score) for a in found] == [(MODEL_V1, 2)]
 
 
-async def test_duplicate_analysis_raises(session: AsyncSession) -> None:
+async def test_duplicate_analysis_returns_winner(session: AsyncSession) -> None:
     doc = await documents.create(session, "hash-a", None, "normalized text")
-    await documents.save_analyses(session, [_analysis(doc.id, "arbitration")])
+    first = await documents.save_analyses(
+        session, [_analysis(doc.id, "arbitration", score=2)]
+    )
 
-    # Same (document_id, category, model_version) violates the composite unique.
-    with pytest.raises(IntegrityError):
-        await documents.save_analyses(session, [_analysis(doc.id, "arbitration")])
+    # A concurrent run persists the same (document_id, category, model_version)
+    # first; the savepoint absorbs the composite-unique violation and the loser
+    # gets back the winner's cached rows (score 2), not its own (score 5).
+    second = await documents.save_analyses(
+        session, [_analysis(doc.id, "arbitration", score=5)]
+    )
+
+    assert [a.score for a in first] == [2]
+    assert [(a.category, a.score) for a in second] == [("arbitration", 2)]
 
 
 async def test_get_document_with_analyses(session: AsyncSession) -> None:
@@ -499,7 +513,7 @@ async def test_list_for_user_returns_only_that_users_entries(
     second = await history.append(session, alice.id, doc.id, "up")
     await history.append(session, bob.id, doc.id, "up")
 
-    found = await history.list_for_user(session, alice.id)
+    found = await history.list_for_user(session, alice.id, limit=50)
     assert {e.id for e in found} == {first.id, second.id}
     assert all(e.user_id == alice.id for e in found)
 
@@ -509,7 +523,7 @@ async def test_list_for_user_returns_empty_list_when_none(
 ) -> None:
     user = await users.create(session, "ada@example.com", "pw1")
 
-    assert await history.list_for_user(session, user.id) == []
+    assert await history.list_for_user(session, user.id, limit=50) == []
 
 
 async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
@@ -529,5 +543,5 @@ async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
     newest.created_at = base + timedelta(minutes=10)
     await session.flush()
 
-    found = await history.list_for_user(session, user.id)
+    found = await history.list_for_user(session, user.id, limit=50)
     assert [e.id for e in found] == [newest.id, middle.id, oldest.id]

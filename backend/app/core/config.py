@@ -15,6 +15,19 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://clearterms:clearterms@localhost:5432/clearterms"
     )
 
+    # Connection pool. Defaults (5 + 10 overflow) throttle concurrency too hard;
+    # size the base pool to steady-state and let overflow absorb bursts.
+    # pool_recycle drops connections older than this so a load balancer / server
+    # idle-timeout can't leave a stale one in the pool. statement_timeout is set
+    # per connection (asyncpg server_settings) as a backstop against a runaway
+    # query pinning a pool slot — kept above the agent's own budget since the
+    # LLM call does not hold a query open (it runs between statements).
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 1800
+    db_statement_timeout_ms: int = 30000
+
     # Dev-only default; set CLEARTERMS_JWT_SECRET (>=32 bytes) in production.
     jwt_secret: SecretStr = SecretStr("change-me")
     jwt_algorithm: str = "HS256"
