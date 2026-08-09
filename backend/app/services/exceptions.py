@@ -63,3 +63,11 @@ class TooManyAttachmentsError(DomainError):
     def __init__(self, detail: str = "too many attachments") -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class QueueFullError(DomainError):
+    """Analysis queue is at capacity; the caller should retry later."""
+
+
+class QueueTimeoutError(DomainError):
+    """Caller's wait for a queue slot expired before the job started."""

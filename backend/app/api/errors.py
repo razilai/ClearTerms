@@ -11,6 +11,8 @@ from app.services.exceptions import (
     InvalidInputError,
     NotFoundError,
     NotOwnerError,
+    QueueFullError,
+    QueueTimeoutError,
     TooManyAttachmentsError,
     UnsupportedMediaTypeError,
 )
@@ -46,5 +48,16 @@ def register_exception_handlers(app: FastAPI) -> None:
                 return JSONResponse(status_code=400, content={"detail": detail})
             case InvalidInputError(detail=detail):
                 return JSONResponse(status_code=400, content={"detail": detail})
+            case QueueFullError():
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Analysis queue is full, try again shortly"},
+                    headers={"Retry-After": "30"},
+                )
+            case QueueTimeoutError():
+                return JSONResponse(
+                    status_code=504,
+                    content={"detail": "Analysis timed out waiting to start"},
+                )
             case _:
                 raise exc

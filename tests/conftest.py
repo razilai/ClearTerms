@@ -20,6 +20,7 @@ without needing a commit (the app's repos flush; get_session owns the commit).
 import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -248,3 +249,23 @@ def fake_storage() -> Iterator[dict[str, bytes]]:
     finally:
         storage_module.set_fake_store(None)
         media_module.set_processor(None)
+
+
+@pytest_asyncio.fixture
+async def file_session_factory(
+    tmp_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """A session factory over a real SQLite *file*, one connection per session.
+
+    The `session` fixture's in-memory StaticPool hands every session the same
+    DBAPI connection, so a worker "opening its own session" would silently share
+    the caller's transaction — hiding exactly the cross-session behaviour the
+    queue has to get right. A file-backed database gives real isolation.
+    """
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/queue.db")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        await engine.dispose()
