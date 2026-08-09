@@ -2,7 +2,15 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -10,6 +18,9 @@ from app.models.base import Base
 
 class Post(Base):
     __tablename__ = "posts"
+    # (created_at, id) desc covers list_posts' keyset page: newest first, id as
+    # the tiebreak so the cursor is a total order (two posts can share a second).
+    __table_args__ = (Index("ix_posts_created_id", "created_at", "id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -26,9 +37,15 @@ class Post(Base):
 
 class Comment(Base):
     __tablename__ = "comments"
+    # (post_id, created_at, id) covers list_comments' keyset page within a post;
+    # it also serves plain post_id lookups (leading column), so no separate
+    # single-column index on post_id is needed.
+    __table_args__ = (Index("ix_comments_post_created_id", "post_id", "created_at", "id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id"), index=True)
+    # ondelete=CASCADE: deleting a post drops its comments at the db level, so
+    # the service does a single DELETE on the post (mirrors Finding/Analysis).
+    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -43,4 +60,7 @@ class Like(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id"), index=True)
+    # ondelete=CASCADE: deleting a post drops its likes at the db level.
+    post_id: Mapped[int] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"), index=True
+    )

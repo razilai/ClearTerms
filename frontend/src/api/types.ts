@@ -31,7 +31,16 @@ export interface PostOut {
 }
 
 export interface PostDetail extends PostOut {
+  // First keyset page of comments; fetch more with listComments + this cursor.
   comments: CommentOut[]
+  comments_next_cursor: string | null
+}
+
+// Keyset-paginated list envelope (mirror of app.schemas.pagination.Page).
+// next_cursor is null on the last page; pass it back to fetch the next one.
+export interface Page<T> {
+  items: T[]
+  next_cursor: string | null
 }
 
 export interface LikeResponse {
@@ -76,10 +85,6 @@ export interface HistoryEntryOut {
   url: string | null
   verdict: string
   created_at: string
-}
-
-export interface HistoryResponse {
-  entries: HistoryEntryOut[]
 }
 
 export interface PreferenceItem {

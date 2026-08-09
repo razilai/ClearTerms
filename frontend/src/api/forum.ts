@@ -2,17 +2,30 @@ import { request, requestJson } from './client'
 import type {
   CommentOut,
   LikeResponse,
+  Page,
   PostCreate,
   PostDetail,
   PostOut,
 } from './types'
 
-export function listPosts(): Promise<PostOut[]> {
-  return request<PostOut[]>('/forum/posts')
+// One keyset page of posts, newest first. Pass the previous page's next_cursor
+// for the next page; omit for the first.
+export function listPosts(cursor?: string | null): Promise<Page<PostOut>> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+  return request<Page<PostOut>>(`/forum/posts${query}`)
 }
 
 export function getPost(postId: number): Promise<PostDetail> {
   return request<PostDetail>(`/forum/posts/${postId}`)
+}
+
+// Further pages of a post's comments (the first page ships inside PostDetail).
+export function listComments(
+  postId: number,
+  cursor?: string | null,
+): Promise<Page<CommentOut>> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+  return request<Page<CommentOut>>(`/forum/posts/${postId}/comments${query}`)
 }
 
 export function createPost(body: PostCreate): Promise<PostOut> {

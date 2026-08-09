@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.deps import CurrentUserDep, SessionDep
+from app.api.deps import CurrentUserDep, PageParamsDep, SessionDep
 from app.schemas.forum import (
     CommentCreate,
     CommentOut,
@@ -12,6 +12,7 @@ from app.schemas.forum import (
     PostDetail,
     PostOut,
 )
+from app.schemas.pagination import Page
 from app.services import forum as forum_service
 
 # Handlers delegate to app.services.forum — no business logic here.
@@ -25,9 +26,11 @@ async def create_post(
     return await forum_service.create_post(session, user, body)
 
 
-@router.get("/posts", response_model=list[PostOut])
-async def list_posts(session: SessionDep, user: CurrentUserDep) -> list[PostOut]:
-    return await forum_service.list_posts(session)
+@router.get("/posts", response_model=Page[PostOut])
+async def list_posts(
+    session: SessionDep, user: CurrentUserDep, page: PageParamsDep
+) -> Page[PostOut]:
+    return await forum_service.list_posts(session, page.limit, page.cursor)
 
 
 @router.get("/posts/{post_id}", response_model=PostDetail)
@@ -35,6 +38,15 @@ async def get_post(
     post_id: int, session: SessionDep, user: CurrentUserDep
 ) -> PostDetail:
     return await forum_service.get_post_detail(session, post_id)
+
+
+@router.get("/posts/{post_id}/comments", response_model=Page[CommentOut])
+async def list_comments(
+    post_id: int, session: SessionDep, user: CurrentUserDep, page: PageParamsDep
+) -> Page[CommentOut]:
+    return await forum_service.list_post_comments(
+        session, post_id, page.limit, page.cursor
+    )
 
 
 @router.delete("/posts/{post_id}", status_code=204)

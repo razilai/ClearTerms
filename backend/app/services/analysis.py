@@ -108,8 +108,8 @@ async def run_analysis(session: AsyncSession, document: Document) -> list[Analys
         )
         for score in scores
     ]
-    await documents_repo.save_analyses(session, analyses)
-    return analyses
+    # Returns our rows, or on a concurrent-run race the winner's cached rows.
+    return await documents_repo.save_analyses(session, analyses)
 
 
 def normalize_text(text: str) -> str:

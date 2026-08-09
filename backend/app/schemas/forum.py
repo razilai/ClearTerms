@@ -40,7 +40,10 @@ class PostOut(BaseModel):
 
 
 class PostDetail(PostOut):
+    # First keyset page of comments (oldest first). comments_next_cursor is set
+    # when more exist; fetch them from GET /forum/posts/{id}/comments?cursor=.
     comments: list[CommentOut]
+    comments_next_cursor: str | None = None
 
 
 class LikeResponse(BaseModel):

@@ -8,8 +8,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import settings
 
 # pool_pre_ping recycles connections the server dropped (idle timeouts, restarts)
-# instead of handing a dead one to the first request after the gap.
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+# instead of handing a dead one to the first request after the gap. Pool sizing
+# and the per-connection statement_timeout are tuned from settings; the timeout
+# rides on asyncpg's server_settings so every connection gets it at checkout.
+engine = create_async_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_timeout=settings.db_pool_timeout,
+    pool_recycle=settings.db_pool_recycle,
+    connect_args={
+        "server_settings": {"statement_timeout": str(settings.db_statement_timeout_ms)}
+    },
+)
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
