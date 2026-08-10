@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # queued plus time running. The job itself is NOT cancelled — it keeps
     # running and still populates the cache.
     analysis_queue_timeout_seconds: float = 300.0
+    # Fairness dial. A queued job's score is priority * this + sequence, so at
+    # most `priority * alpha` later arrivals can overtake it — that bound is
+    # what keeps a busy user's later jobs from starving. Read it as "how many
+    # other users' first jobs may jump ahead of your second job". Too low and
+    # priority stops meaning anything; too high (near analysis_queue_maxsize)
+    # and a second job is unreachable while the queue is busy.
+    analysis_queue_alpha: int = 10
 
     # Object storage (MinIO in dev via docker-compose; swap endpoint env vars for
     # real S3 in prod — the boto3 client is endpoint-agnostic).

@@ -91,13 +91,20 @@ does **not exist yet** (see stubbed list below).
   runs on** — callers must never close over their request session, since a job
   can wait a long time and a request session holds a pooled connection and,
   mid-transaction, locks for the whole wait; getting this wrong reintroduces
-  the deadlock the design exists to avoid. Priority is the submitter's count of
-  in-flight jobs, so everyone's first job beats everyone's second. No aging term
-  is needed and nothing starves — not because a user holds one entry per level
-  (they can hold several at the same level), but because priority 0 requires
-  zero in-flight jobs, so a user has at most one *queued* priority-0 entry at a
-  time and the monotonic sequence tie-break keeps earlier priority-0 arrivals
-  ahead of later ones. A full queue raises `QueueFullError` (503). A caller
+  the deadlock the design exists to avoid. Ordering is by
+  `score = priority * settings.analysis_queue_alpha + sequence`, where priority
+  is the submitter's count of in-flight jobs and sequence is a monotonic arrival
+  counter. Priority alone means everyone's first job beats everyone's second —
+  but on its own it starves, since a steady stream of *new* users supplies an
+  unbounded number of priority-0 arrivals to overtake a second job. Sequence is
+  the ageing term that bounds it: an entry at priority p can be overtaken by at
+  most `p * alpha` later arrivals, after which nothing new can pass it. Alpha is
+  the dial between the two properties — read it as "how many other users' first
+  jobs may jump ahead of your second job" — and strict first-beats-second holds
+  only within that window, deliberately. Entries already queued age uniformly,
+  so ageing never reorders them among themselves and needs no heap traversal;
+  adding the term to newcomers is equivalent to decrementing everyone else.
+  A full queue raises `QueueFullError` (503). A caller
   whose total wait — queued **plus** running, since the timeout wraps the whole
   submit — passes `settings.analysis_queue_timeout_seconds` gets
   `QueueTimeoutError` (504), with the job left running via `asyncio.shield` so
