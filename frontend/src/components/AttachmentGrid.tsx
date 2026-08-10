@@ -5,17 +5,20 @@ interface Props {
   attachments: AttachmentOut[]
 }
 
+// Displayed tile size for every attachment state (skeleton, failed, image, video).
+const TILE = 160
+
 function AttachmentItem({ a }: { a: AttachmentOut }) {
   if (a.status === 'pending') {
-    return <Skeleton height={80} width={80} radius="sm" />
+    return <Skeleton height={TILE} width={TILE} radius="sm" />
   }
 
   if (a.status === 'failed') {
     return (
       <Box
         style={{
-          width: 80,
-          height: 80,
+          width: TILE,
+          height: TILE,
           border: '1px solid var(--mantine-color-red-3)',
           borderRadius: 'var(--mantine-radius-sm)',
           display: 'flex',
@@ -42,8 +45,8 @@ function AttachmentItem({ a }: { a: AttachmentOut }) {
         <Image
           src={a.thumbnail_url ?? a.display_url}
           alt="attachment"
-          width={80}
-          height={80}
+          width={TILE}
+          height={TILE}
           fit="cover"
           radius="sm"
           style={{ cursor: 'pointer' }}
@@ -54,14 +57,14 @@ function AttachmentItem({ a }: { a: AttachmentOut }) {
 
   if (a.media_type === 'video' && a.display_url) {
     return (
-      <Box style={{ position: 'relative', width: 80, height: 80 }}>
+      <Box style={{ position: 'relative', width: TILE, height: TILE }}>
         <video
           src={a.display_url}
           poster={a.thumbnail_url ?? undefined}
           controls
           style={{
-            width: 80,
-            height: 80,
+            width: TILE,
+            height: TILE,
             objectFit: 'cover',
             borderRadius: 'var(--mantine-radius-sm)',
             display: 'block',
