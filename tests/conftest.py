@@ -41,12 +41,12 @@ from app.main import app
 # every table on Base.metadata, which create_all below depends on.
 from app.models import Base
 
-# The production model (qwen3:4b) is a thinking model: minutes per call on a
-# laptop CPU. The default tiers still hit a real agent — no fakes — but against
-# a tiny instruct model, so a full run stays under a minute. The `slow` tier
-# (tests/system.py) keeps exercising settings.agent_model to prove the real
-# model still works. Override with CLEARTERMS_TEST_AGENT_MODEL if you prefer
-# another small model you already have pulled.
+# Every tier hits a real agent — no fakes — against a tiny instruct model, so a
+# full run stays under a minute. The `slow` tier (tests/system.py) runs against
+# settings.agent_model directly (rather than this override) to prove whatever the
+# configured production model is still works end to end. Override with
+# CLEARTERMS_TEST_AGENT_MODEL if you prefer another small model you already have
+# pulled.
 LIGHT_MODEL = os.environ.get("CLEARTERMS_TEST_AGENT_MODEL", "qwen2.5:0.5b")
 
 

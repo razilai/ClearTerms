@@ -171,7 +171,11 @@ async def classify_chunk(text: str) -> ChunkClassification:
     report. ``deps`` is the raw chunk, so evidence is checked against exactly
     the text the model was shown.
     """
-    result = await build_agent().run(f"Excerpt:\n{text}", deps=text)
+    # `/no_think` disables qwen3's reasoning chain (model-side, via its chat
+    # template): thinking models emit long prose before any output, which both
+    # costs minutes per chunk on CPU and fights NativeOutput's constrained JSON
+    # decoding. No-op on non-thinking models.
+    result = await build_agent().run(f"/no_think\nExcerpt:\n{text}", deps=text)
     return densify(result.output.findings)
 
 
