@@ -77,6 +77,19 @@ services:
       OLLAMA_HOST: http://ollama:11434
     entrypoint: ["sh", "-c", "ollama pull qwen3:4b"]
 
+  # One-shot: pull the tiny model the non-slow test tier uses (conftest.py
+  # LIGHT_MODEL / CLEARTERMS_TEST_AGENT_MODEL). Kept separate from the prod pull
+  # so `docker compose up` yields a test-ready Ollama; tests run on the host and
+  # reach it via the exposed :11434. Bump alongside conftest's LIGHT_MODEL.
+  ollama-pull-test:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c", "ollama pull qwen2.5:0.5b"]
+
   backend:
     build:
       context: ./backend
