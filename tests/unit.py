@@ -1179,7 +1179,7 @@ async def test_analyze_issues_no_write_before_submitting(
     writes_at_submit: list[str] = []
     submitted = False
 
-    def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def _record(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
     engine = file_session_factory.kw["bind"]
