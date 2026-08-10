@@ -157,6 +157,12 @@ async def upload_attachment(
         original_key=key,
     )
 
+    # Commit before scheduling: the background worker opens its own session on a
+    # different connection, so the row must be durable when it runs. FastAPI runs
+    # BackgroundTasks before the request session's own commit, so without this the
+    # worker reads None and bails, leaving the attachment stuck "pending" forever.
+    await session.commit()
+
     background_tasks.add_task(media_service.process_attachment, attachment.id)
     return _attachment_out(attachment)
 
