@@ -927,6 +927,53 @@ async def test_rejected_submission_does_not_leak_the_pending_counter(
     assert q._pending == {}
 
 
+async def test_a_fresh_users_rejected_submission_leaves_no_stray_key(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The case the other two leak detectors miss.
+
+    test_pending_counter_returns_to_zero_after_jobs_finish never rejects a
+    submission at all, and test_rejected_submission_does_not_leak_the_pending_counter
+    always rejects a user who already has in-flight entries, so
+    ``self._pending[user_id]`` inside _priority_for hits an existing key
+    either way. Here user 3 has never submitted anything: if _priority_for
+    reads ``self._pending[user_id]`` (a defaultdict subscript) instead of
+    ``.get(user_id, 0)``, that read alone inserts a stray ``{3: 0}`` before
+    put_nowait ever runs — and since put_nowait then rejects the submission,
+    neither the increment nor the worker's finally/_release ever runs to
+    clean it up.
+    """
+    q = AnalysisQueue()
+    # maxsize=1, not 0 — asyncio.Queue treats maxsize=0 as *unbounded*.
+    await q.start(file_session_factory, workers=1, maxsize=1)
+    release = asyncio.Event()
+    try:
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        # Staggered as in the sibling tests above: user 1 occupies the
+        # worker, user 2 fills the single queue slot, each given its own
+        # tick so the rejection below fires because the queue is genuinely
+        # full rather than by a scheduling accident.
+        first = asyncio.create_task(q.submit(user_id=1, job=blocker))
+        await asyncio.sleep(0.05)
+        second = asyncio.create_task(q.submit(user_id=2, job=blocker))
+        await asyncio.sleep(0.05)
+
+        # User 3 has no prior or concurrent submission of their own.
+        with pytest.raises(QueueFullError):
+            await q.submit(user_id=3, job=blocker)
+
+        release.set()
+        await asyncio.gather(first, second)
+    finally:
+        release.set()
+        await q.stop()
+
+    assert q._pending == {}
+
+
 # --- analysis pipeline: get_or_create_document + queue wiring ---------------
 
 

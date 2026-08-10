@@ -137,8 +137,13 @@ class AnalysisQueue:
         one user cannot make everyone else wait behind all of it. Cannot starve
         anyone — a job at priority N waits only behind jobs at priority < N, and
         each user contributes at most one job to each of those levels.
+
+        Uses .get() rather than the subscript: this runs before put_nowait, so
+        a rejected submission (QueueFullError) never reaches the increment or
+        the worker's finally/_release — a subscript read would insert a
+        stray zero-valued key here that nothing ever cleans up.
         """
-        return self._pending[user_id]
+        return self._pending.get(user_id, 0)
 
     def _release(self, user_id: int) -> None:
         """Undo one submit()'s pending-count increment for ``user_id``."""
