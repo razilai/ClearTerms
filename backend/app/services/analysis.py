@@ -1,9 +1,11 @@
 """Analysis pipeline orchestration (preference-independent).
 
-Steps: normalize text -> hash -> cache lookup. On miss: create the Document,
-hand the normalized text to app.agent (which cleans, chunks, and takes the
-per-category max across chunks itself), and persist the returned scores to the
-Analysis cache keyed by document_id + model_version.
+Steps: normalize text -> hash -> cache lookup. On miss the caller does none of
+the work itself: it submits `analyze_document_job` to app.services.queue and
+waits. The job — on a session the queue owns, never the caller's — creates the
+Document, hands the normalized text to app.agent (which cleans, chunks, and
+takes the per-category max across chunks itself), and persists the returned
+scores to the Analysis cache keyed by document_id + model_version.
 
 Owns the seam between the LLM (app.agent) and the rest of the system: the agent
 receives plain text and returns structured scores; cache/db/preferences live here.
@@ -32,9 +34,15 @@ async def analyze(
 ) -> tuple[str, int]:
     """Full pipeline for POST /analyze. Returns (verdict, document_id).
 
-    normalize -> hash -> cache lookup; on miss submit run_analysis via
-    app.services.queue; then compute_verdict against the user's preferences
-    and append a history entry.
+    normalize -> hash -> cache lookup; on miss submit `analyze_document_job`
+    to app.services.queue and re-read the cache through this session once it
+    returns; then compute_verdict against the user's preferences and append a
+    history entry.
+
+    `analyze_document_job` specifically, never `run_analysis`: run_analysis
+    takes a caller-supplied session, and submitting a closure over *this*
+    session is the deadlock the queue exists to prevent — the session (and its
+    pooled connection, and any locks) would stay open for the whole queue wait.
     """
     normalized = normalize_text(text)
     text_hash = compute_hash(normalized)
@@ -140,6 +148,23 @@ async def get_or_create_document(
     Two callers can miss the cache for the same text and both enqueue a job, so
     the insert can lose a race against the unique index on documents.text_hash.
     The loser rolls back and re-reads rather than failing the request.
+
+    PRECONDITION: ``session`` must have no other pending work. A failed flush
+    leaves the session unusable until something is rolled back, and the
+    recovery below rolls back the whole transaction, not just the failed
+    insert — so anything else the caller had uncommitted is discarded too.
+    The queue's per-job session satisfies this: `analyze_document_job` calls
+    this first, before writing anything else.
+
+    Deliberately NOT scoped with a SAVEPOINT (session.begin_nested), which is
+    the usual way to narrow a flush-error recovery. Under pysqlite that would
+    change production behaviour to fix a test-only artifact: pysqlite defers
+    BEGIN until the first DML, so on a session that has issued only the SELECT
+    above, the SAVEPOINT itself opens the transaction and RELEASE therefore
+    *commits* the insert on the spot. Every analysis that then failed — the
+    common case when Ollama is down — would leave behind a Document row
+    holding its original_text, up to settings.max_analyze_bytes each, instead
+    of rolling back with the job.
     """
     document = await documents_repo.get_by_hash(session, text_hash)
     if document is not None:

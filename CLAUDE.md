@@ -92,13 +92,22 @@ does **not exist yet**, and the agent still returns dummy scores (see below).
   can wait a long time and a request session holds a pooled connection and,
   mid-transaction, locks for the whole wait; getting this wrong reintroduces
   the deadlock the design exists to avoid. Priority is the submitter's count of
-  in-flight jobs, so everyone's first job beats everyone's second — no aging
-  term is needed, since a job at priority N only waits behind jobs at priority
-  < N and each user contributes at most one job per level, so nothing starves.
-  A full queue raises `QueueFullError` (503); waiting past
-  `settings.analysis_queue_timeout_seconds` raises `QueueTimeoutError` (504),
-  with the job left running via `asyncio.shield` so the cache still gets
-  populated and a retry is likely a cache hit. Cache hits never enqueue.
+  in-flight jobs, so everyone's first job beats everyone's second. No aging term
+  is needed and nothing starves — not because a user holds one entry per level
+  (they can hold several at the same level), but because priority 0 requires
+  zero in-flight jobs, so a user has at most one *queued* priority-0 entry at a
+  time and the monotonic sequence tie-break keeps earlier priority-0 arrivals
+  ahead of later ones. A full queue raises `QueueFullError` (503). A caller
+  whose total wait — queued **plus** running, since the timeout wraps the whole
+  submit — passes `settings.analysis_queue_timeout_seconds` gets
+  `QueueTimeoutError` (504), with the job left running via `asyncio.shield` so
+  the cache still gets populated and a retry is likely a cache hit. A caller
+  still parked when `stop()` runs gets `QueueShutdownError` (503 + `Retry-After`),
+  whether its job was still queued or already running: shutdown cancels the
+  workers and then drains the queue, resolving every waiting caller and
+  releasing its in-flight count, rather than dropping connections. `submit`
+  after `stop()` raises rather than enqueueing onto a queue nothing will drain.
+  Cache hits never enqueue.
   Caveat: the queue is per process — multiple uvicorn workers each get their
   own, so the concurrency cap multiplies and fairness only holds within a
   process; fixing that needs an out-of-process broker, which means expressing
