@@ -4,6 +4,21 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
+
+
+class AttachmentOut(BaseModel):
+    id: int
+    media_type: str
+    status: str
+    mime: str
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
+    # None while status == "pending"
+    display_url: str | None = None
+    thumbnail_url: str | None = None
+
 
 class PostCreate(BaseModel):
     # Length caps mirror the VARCHAR columns on app.models.forum.Post.
@@ -11,10 +26,16 @@ class PostCreate(BaseModel):
     body: str = Field(min_length=1)
     document_id: int | None = None
     category: str | None = Field(default=None, max_length=64)
+    attachment_ids: list[int] = Field(
+        default_factory=list, max_length=settings.max_attachments_per_item
+    )
 
 
 class CommentCreate(BaseModel):
     body: str = Field(min_length=1)
+    attachment_ids: list[int] = Field(
+        default_factory=list, max_length=settings.max_attachments_per_item
+    )
 
 
 class CommentUpdate(BaseModel):
@@ -27,6 +48,7 @@ class CommentOut(BaseModel):
     body: str
     created_at: datetime
     edited_at: datetime | None
+    attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
 class PostOut(BaseModel):
@@ -37,6 +59,7 @@ class PostOut(BaseModel):
     category: str | None
     like_count: int
     created_at: datetime
+    attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
 class PostDetail(PostOut):

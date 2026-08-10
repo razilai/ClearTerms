@@ -66,3 +66,9 @@ export function requestJson<T>(path: string, method: string, body: unknown): Pro
     body: JSON.stringify(body),
   })
 }
+
+// For multipart file uploads — do NOT set Content-Type; the browser sets the
+// boundary automatically when body is FormData.
+export function requestForm<T>(path: string, formData: FormData): Promise<T> {
+  return request<T>(path, { method: 'POST', body: formData })
+}

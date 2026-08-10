@@ -1,5 +1,6 @@
-import { request, requestJson } from './client'
+import { request, requestForm, requestJson } from './client'
 import type {
+  AttachmentOut,
   CommentOut,
   LikeResponse,
   Page,
@@ -50,4 +51,25 @@ export function deleteComment(commentId: number): Promise<void> {
 
 export function toggleLike(postId: number): Promise<LikeResponse> {
   return request<LikeResponse>(`/forum/posts/${postId}/like`, { method: 'PUT' })
+}
+
+export function uploadAttachment(file: File): Promise<AttachmentOut> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return requestForm<AttachmentOut>('/forum/attachments', fd)
+}
+
+export function getAttachment(attachmentId: number): Promise<AttachmentOut> {
+  return request<AttachmentOut>(`/forum/attachments/${attachmentId}`)
+}
+
+export function addCommentWithAttachments(
+  postId: number,
+  body: string,
+  attachmentIds: number[],
+): Promise<CommentOut> {
+  return requestJson<CommentOut>(`/forum/posts/${postId}/comments`, 'POST', {
+    body,
+    attachment_ids: attachmentIds,
+  })
 }

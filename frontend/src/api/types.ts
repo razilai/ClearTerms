@@ -5,11 +5,27 @@ export interface TokenResponse {
   token_type: string
 }
 
+export type AttachmentStatus = 'pending' | 'ready' | 'failed'
+export type MediaType = 'image' | 'video'
+
+export interface AttachmentOut {
+  id: number
+  media_type: MediaType
+  status: AttachmentStatus
+  mime: string
+  width: number | null
+  height: number | null
+  duration_seconds: number | null
+  display_url: string | null
+  thumbnail_url: string | null
+}
+
 export interface PostCreate {
   title: string
   body: string
   document_id?: number | null
   category?: string | null
+  attachment_ids?: number[]
 }
 
 export interface CommentOut {
@@ -18,6 +34,7 @@ export interface CommentOut {
   body: string
   created_at: string
   edited_at: string | null
+  attachments: AttachmentOut[]
 }
 
 export interface PostOut {
@@ -28,6 +45,7 @@ export interface PostOut {
   category: string | null
   like_count: number
   created_at: string
+  attachments: AttachmentOut[]
 }
 
 export interface PostDetail extends PostOut {

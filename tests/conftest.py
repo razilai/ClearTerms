@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import (
 from testcontainers.community.postgres import PostgresContainer
 
 from app.agent import classifier
+from app.core import storage as storage_module
 from app.core.config import settings
 from app.db import engine as engine_module
 from app.main import app
@@ -200,3 +201,50 @@ async def signup_headers(
 @pytest_asyncio.fixture
 async def auth_headers(client: httpx.AsyncClient) -> dict[str, str]:
     return await signup_headers(client, "alice@example.com")
+
+
+@pytest.fixture(autouse=True)
+def fake_storage() -> Iterator[dict[str, bytes]]:
+    """Replace object storage with an in-memory dict for every test.
+
+    Tests that need to assert on stored objects can access ``fake_store`` by
+    adding ``fake_storage`` to their parameter list. The store is cleared between
+    tests because the fixture is function-scoped.
+    """
+    from app.services import media as media_module
+
+    store: dict[str, bytes] = {}
+    storage_module.set_fake_store(store)
+
+    # Async processor stub: marks the attachment ready with placeholder keys.
+    # Must be async so it can be awaited inside the existing event loop in tests;
+    # asyncio.run() would fail with "loop already running".
+    async def _fake_process(attachment_id: int) -> None:
+        from app.db.engine import SessionFactory
+        from app.db.repos import attachments as attachments_repo
+
+        async with SessionFactory() as session:
+            a = await attachments_repo.get(session, attachment_id)
+            if a is None:
+                return
+            display_key = f"attachments/{attachment_id}/display.webp"
+            thumb_key = f"attachments/{attachment_id}/thumb.webp"
+            store[display_key] = b"fake-display"
+            store[thumb_key] = b"fake-thumb"
+            await attachments_repo.set_ready(
+                session,
+                attachment_id,
+                display_key=display_key,
+                thumbnail_key=thumb_key,
+                width=640,
+                height=480,
+                duration_seconds=None,
+            )
+            await session.commit()
+
+    media_module.set_processor(_fake_process)
+    try:
+        yield store
+    finally:
+        storage_module.set_fake_store(None)
+        media_module.set_processor(None)

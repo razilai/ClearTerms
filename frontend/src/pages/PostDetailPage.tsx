@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Button,
   Center,
   Container,
@@ -15,11 +16,11 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import {
-  addComment,
+  addCommentWithAttachments,
   deleteComment,
   deletePost,
   editComment,
@@ -29,8 +30,10 @@ import {
 } from '../api/forum'
 import type { CommentOut, LikeResponse, PostDetail } from '../api/types'
 import { useAuth } from '../auth/useAuth'
+import { AttachmentGrid } from '../components/AttachmentGrid'
 import { CategoryChip } from '../components/CategoryChip'
 import { CommentItem } from '../components/CommentItem'
+import { MediaDropzone } from '../components/MediaDropzone'
 
 const showError = (err: Error) =>
   notifications.show({ color: 'red', message: err.message })
@@ -42,6 +45,7 @@ export function PostDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [commentDraft, setCommentDraft] = useState('')
+  const commentAttachmentIdsRef = useRef<number[]>([])
   // Backend reports liked-state only in the toggle response, so it's unknown
   // until the first click.
   const [liked, setLiked] = useState<boolean | null>(null)
@@ -100,9 +104,11 @@ export function PostDetailPage() {
   })
 
   const addCommentMutation = useMutation({
-    mutationFn: (body: string) => addComment(postId, body),
+    mutationFn: ({ body, attachmentIds }: { body: string; attachmentIds: number[] }) =>
+      addCommentWithAttachments(postId, body, attachmentIds),
     onSuccess: () => {
       setCommentDraft('')
+      commentAttachmentIdsRef.current = []
       invalidatePost()
     },
     onError: showError,
@@ -133,6 +139,10 @@ export function PostDetailPage() {
       showError(err)
     },
   })
+
+  const handleCommentAttachmentChange = useCallback((ids: number[]) => {
+    commentAttachmentIdsRef.current = ids
+  }, [])
 
   if (isPending) {
     return (
@@ -190,6 +200,7 @@ export function PostDetailPage() {
         >
           {post.body}
         </Text>
+        <AttachmentGrid attachments={post.attachments} />
         <Group mt="lg" justify="space-between">
           <Button
             variant={liked ? 'filled' : 'light'}
@@ -248,12 +259,23 @@ export function PostDetailPage() {
           value={commentDraft}
           onChange={(e) => setCommentDraft(e.currentTarget.value)}
         />
+        <Box mt="sm">
+          <MediaDropzone
+            onChange={handleCommentAttachmentChange}
+            disabled={addCommentMutation.isPending}
+          />
+        </Box>
         <Group justify="flex-end" mt="sm">
           <Button
             size="xs"
             disabled={!commentDraft.trim()}
             loading={addCommentMutation.isPending}
-            onClick={() => addCommentMutation.mutate(commentDraft.trim())}
+            onClick={() =>
+              addCommentMutation.mutate({
+                body: commentDraft.trim(),
+                attachmentIds: commentAttachmentIdsRef.current,
+              })
+            }
           >
             Comment
           </Button>

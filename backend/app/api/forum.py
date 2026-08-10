@@ -1,9 +1,12 @@
-"""Forum routes: posts, comments, likes."""
+"""Forum routes: posts, comments, likes, attachments."""
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile
 
 from app.api.deps import CurrentUserDep, PageParamsDep, SessionDep
 from app.schemas.forum import (
+    AttachmentOut,
     CommentCreate,
     CommentOut,
     CommentUpdate,
@@ -17,6 +20,23 @@ from app.services import forum as forum_service
 
 # Handlers delegate to app.services.forum — no business logic here.
 router = APIRouter(prefix="/forum", tags=["forum"])
+
+
+@router.post("/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_attachment(
+    file: Annotated[UploadFile, File()],
+    session: SessionDep,
+    user: CurrentUserDep,
+    background_tasks: BackgroundTasks,
+) -> AttachmentOut:
+    return await forum_service.upload_attachment(session, user, file, background_tasks)
+
+
+@router.get("/attachments/{attachment_id}", response_model=AttachmentOut)
+async def get_attachment(
+    attachment_id: int, session: SessionDep, user: CurrentUserDep
+) -> AttachmentOut:
+    return await forum_service.get_attachment(session, attachment_id)
 
 
 @router.post("/posts", response_model=PostOut, status_code=201)
@@ -58,7 +78,9 @@ async def delete_post(post_id: int, session: SessionDep, user: CurrentUserDep) -
 async def add_comment(
     post_id: int, body: CommentCreate, session: SessionDep, user: CurrentUserDep
 ) -> CommentOut:
-    return await forum_service.add_comment(session, user, post_id, body.body)
+    return await forum_service.add_comment(
+        session, user, post_id, body.body, body.attachment_ids
+    )
 
 
 @router.patch("/comments/{comment_id}", response_model=CommentOut)

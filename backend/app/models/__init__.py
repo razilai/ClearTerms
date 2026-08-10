@@ -7,6 +7,7 @@ table on Base.metadata (needed by init_db / create_all).
 """
 
 from app.models.analysis import Analysis
+from app.models.attachment import Attachment
 from app.models.base import Base
 from app.models.document import Document
 from app.models.finding import Finding
@@ -17,6 +18,7 @@ from app.models.user import User
 
 __all__ = [
     "Analysis",
+    "Attachment",
     "Base",
     "Comment",
     "Document",
