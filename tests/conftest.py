@@ -26,12 +26,13 @@ which is why the teardown is in a `finally`.
 
 import asyncio
 import os
+import uuid
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncSession,
@@ -291,32 +292,44 @@ def fake_storage() -> Iterator[dict[str, bytes]]:
 
 @pytest_asyncio.fixture
 async def file_session_factory(
-    tmp_path: Path,
+    postgres_url: str,
 ) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """A session factory over a real SQLite *file*, one connection per session.
+    """A committing session factory on a throwaway Postgres database, one
+    genuinely independent connection per session.
 
-    The `session` fixture's in-memory StaticPool hands every session the same
-    DBAPI connection, so a worker "opening its own session" would silently share
-    the caller's transaction — hiding exactly the cross-session behaviour the
-    queue has to get right. A file-backed database gives real isolation.
-
-    WAL mode + a busy timeout mirror app.db.engine.init_db, which turns WAL on
-    for the production database. Without them this fixture diverges from
-    production: a second concurrent writer fails outright with "database is
-    locked" (SQLite's default rollback-journal mode has no wait semantics)
-    instead of serialising behind the first writer and then hitting the unique
-    constraint — the case get-or-create's IntegrityError recovery is written
-    for. WAL still allows only one writer at a time; the busy timeout is what
-    turns "fail immediately" into "wait, then proceed," so both are needed.
+    The `session` fixture's savepoint harness binds every session to one shared
+    connection, so a worker "opening its own session" would silently join the
+    caller's transaction — hiding exactly the cross-session behaviour the queue
+    has to get right, above all the get-or-create insert race whose IntegrityError
+    recovery is written against Postgres's unique-constraint semantics. Testing
+    that on SQLite would prove the wrong dialect, so this stays on Postgres: a
+    private database, created and dropped per test, whose sessions really commit
+    on independent pooled connections.
     """
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{tmp_path}/queue.db",
-        connect_args={"timeout": 30},
-    )
+    db_name = f"queue_test_{uuid.uuid4().hex}"
+
+    async def _admin(sql: str) -> None:
+        # CREATE/DROP DATABASE cannot run inside a transaction block, so drive
+        # them on an AUTOCOMMIT connection to the container's default database.
+        admin_engine = create_async_engine(postgres_url, isolation_level="AUTOCOMMIT")
+        try:
+            async with admin_engine.connect() as conn:
+                await conn.execute(text(sql))
+        finally:
+            await admin_engine.dispose()
+
+    await _admin(f'CREATE DATABASE "{db_name}"')
+    db_url = f"{postgres_url.rsplit('/', 1)[0]}/{db_name}"
+    engine = create_async_engine(db_url)
     try:
         async with engine.begin() as conn:
-            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
             await conn.run_sync(Base.metadata.create_all)
-        yield async_sessionmaker(engine, expire_on_commit=False)
+        yield async_sessionmaker(bind=engine, expire_on_commit=False)
     finally:
         await engine.dispose()
+        # Kick any lingering backends off the database or DROP would block.
+        await _admin(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
+        )
+        await _admin(f'DROP DATABASE IF EXISTS "{db_name}"')

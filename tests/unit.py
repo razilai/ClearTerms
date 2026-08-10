@@ -557,10 +557,11 @@ async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
 
 # --- analysis queue ----------------------------------------------------------
 #
-# The `session` fixture's StaticPool hands every session the same DBAPI
-# connection, which would hide the cross-session behaviour under test here.
-# These use `file_session_factory` (a real SQLite file, one connection per
-# session) so the worker's session is genuinely independent of the caller's.
+# The `session` fixture binds every session to one shared connection, which
+# would hide the cross-session behaviour under test here. These use
+# `file_session_factory` (a throwaway Postgres database, one independent
+# connection per session) so the worker's session is genuinely independent of
+# the caller's.
 
 
 async def test_submit_runs_the_job_and_returns_its_result(
