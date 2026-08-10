@@ -6,10 +6,13 @@ from fastapi.responses import JSONResponse
 from app.services.exceptions import (
     DomainError,
     DuplicateEmailError,
+    FileTooLargeError,
     InvalidCredentialsError,
     InvalidInputError,
     NotFoundError,
     NotOwnerError,
+    TooManyAttachmentsError,
+    UnsupportedMediaTypeError,
 )
 
 
@@ -35,6 +38,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                 return JSONResponse(
                     status_code=403, content={"detail": "Not the owner"}
                 )
+            case FileTooLargeError(detail=detail):
+                return JSONResponse(status_code=413, content={"detail": detail})
+            case UnsupportedMediaTypeError(detail=detail):
+                return JSONResponse(status_code=415, content={"detail": detail})
+            case TooManyAttachmentsError(detail=detail):
+                return JSONResponse(status_code=400, content={"detail": detail})
             case InvalidInputError(detail=detail):
                 return JSONResponse(status_code=400, content={"detail": detail})
             case _:

@@ -2,6 +2,7 @@ import { ActionIcon, Button, Group, Paper, Text, Textarea } from '@mantine/core'
 import { useState } from 'react'
 
 import type { CommentOut } from '../api/types'
+import { AttachmentGrid } from './AttachmentGrid'
 
 interface Props {
   comment: CommentOut
@@ -81,9 +82,12 @@ export function CommentItem({ comment, isOwn, onEdit, onDelete, busy }: Props) {
           </Group>
         </>
       ) : (
-        <Text size="sm" mt="xs" style={{ whiteSpace: 'pre-wrap' }}>
-          {comment.body}
-        </Text>
+        <>
+          <Text size="sm" mt="xs" style={{ whiteSpace: 'pre-wrap' }}>
+            {comment.body}
+          </Text>
+          <AttachmentGrid attachments={comment.attachments} />
+        </>
       )}
     </Paper>
   )

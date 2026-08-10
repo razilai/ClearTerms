@@ -44,6 +44,33 @@ class Settings(BaseSettings):
     chunk_tokens: int = 3000
     chunk_overlap_tokens: int = 200
 
+    # Object storage (MinIO in dev via docker-compose; swap endpoint env vars for
+    # real S3 in prod — the boto3 client is endpoint-agnostic).
+    # s3_endpoint_url is the internal URL the backend container uses for put/get.
+    # s3_public_endpoint_url is the host the browser resolves presigned GET URLs
+    # against (MinIO's exposed port; real S3 = same as endpoint_url, omit field).
+    s3_endpoint_url: str = "http://minio:9000"
+    s3_public_endpoint_url: str = "http://localhost:9000"
+    s3_bucket: str = "clearterms-media"
+    s3_access_key: str = "minioadmin"
+    s3_secret_key: SecretStr = SecretStr("minioadmin")
+    s3_region: str = "us-east-1"
+    media_url_ttl_seconds: int = 3600
+
+    # Upload limits
+    max_image_bytes: int = 10_000_000
+    max_video_bytes: int = 100_000_000
+    max_video_duration_seconds: int = 120
+    max_attachments_per_item: int = 10
+    video_max_height: int = 720
+    image_max_dimension: int = 2048
+    allowed_image_mimes: frozenset[str] = frozenset(
+        {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    )
+    allowed_video_mimes: frozenset[str] = frozenset(
+        {"video/mp4", "video/webm", "video/quicktime"}
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

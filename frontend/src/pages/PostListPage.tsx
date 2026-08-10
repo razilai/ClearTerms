@@ -96,6 +96,11 @@ export function PostListPage() {
                 <Text size="xs" c="dimmed">
                   · ♥ {post.like_count}
                 </Text>
+                {post.attachments.length > 0 && (
+                  <Text size="xs" c="dimmed">
+                    · 📎 {post.attachments.length}
+                  </Text>
+                )}
               </Group>
             </Card>
           ))}

@@ -1,4 +1,5 @@
 import {
+  Box,
   Button,
   Container,
   Group,
@@ -10,13 +11,16 @@ import {
 import { useForm } from '@mantine/form'
 import { notifications } from '@mantine/notifications'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { createPost } from '../api/forum'
+import { MediaDropzone } from '../components/MediaDropzone'
 
 export function NewPostPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const attachmentIdsRef = useRef<number[]>([])
 
   const form = useForm({
     initialValues: { title: '', body: '', category: '' },
@@ -37,6 +41,10 @@ export function NewPostPage() {
     },
   })
 
+  const handleAttachmentChange = useCallback((ids: number[]) => {
+    attachmentIdsRef.current = ids
+  }, [])
+
   return (
     <Container size="md">
       <Title order={2} mb="lg">
@@ -49,6 +57,7 @@ export function NewPostPage() {
               title: title.trim(),
               body: body.trim(),
               category: category.trim() || null,
+              attachment_ids: attachmentIdsRef.current,
             }),
           )}
         >
@@ -73,6 +82,9 @@ export function NewPostPage() {
             mt="md"
             {...form.getInputProps('category')}
           />
+          <Box mt="md">
+            <MediaDropzone onChange={handleAttachmentChange} disabled={mutation.isPending} />
+          </Box>
           <Group justify="flex-end" mt="xl">
             <Button variant="default" onClick={() => navigate('/forum')}>
               Cancel

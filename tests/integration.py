@@ -6,6 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.repos import forum as forum_repo
 from tests.conftest import signup_headers
 
+# Minimal valid PNG (1x1 px, smallest valid file)
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+    b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+    b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
 POST_BODY = {"title": "Sneaky arbitration clause", "body": "Section 12 forces arbitration."}
 
 
@@ -472,3 +480,197 @@ async def test_writes_persist_across_requests(
     )
     assert login.status_code == 200, login.text
     assert login.json()["access_token"]
+
+
+# --- attachments ---
+#
+# Storage is faked (in-memory dict) and the processor is a synchronous stub that
+# immediately marks attachments ready. No MinIO, no ffmpeg, no Pillow needed in
+# the default test suite. Real processing is exercised behind the `slow` marker.
+
+
+async def _upload_png(
+    client: httpx.AsyncClient, headers: dict
+) -> tuple[int, dict]:
+    """Upload the tiny PNG and return (attachment_id, response_body)."""
+    files = {"file": ("test.png", _TINY_PNG, "image/png")}
+    resp = await client.post("/forum/attachments", files=files, headers=headers)
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    return body["id"], body
+
+
+async def test_upload_attachment_returns_pending(
+    client: httpx.AsyncClient,
+    auth_headers: dict,
+    fake_storage: dict,
+) -> None:
+    # Background task runs synchronously in tests via the stub processor.
+    # But the upload handler fires it AFTER returning, so at response time
+    # the status is "pending". The poll endpoint then shows "ready".
+    attachment_id, body = await _upload_png(client, auth_headers)
+    assert body["media_type"] == "image"
+    assert body["status"] == "pending"
+    assert body["id"] == attachment_id
+
+
+async def test_poll_attachment_becomes_ready(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """Background stub commits, so committing_client sees the update."""
+    headers = await signup_headers(committing_client, "poll@example.com")
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    resp = await committing_client.post(
+        "/forum/attachments", files=files, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    attachment_id = resp.json()["id"]
+
+    poll = await committing_client.get(
+        f"/forum/attachments/{attachment_id}", headers=headers
+    )
+    assert poll.status_code == 200
+    body = poll.json()
+    assert body["status"] == "ready"
+    assert body["display_url"] is not None
+    assert body["thumbnail_url"] is not None
+    assert body["width"] == 640
+    assert body["height"] == 480
+
+
+async def test_post_with_attachment(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    headers = await signup_headers(committing_client, "attach@example.com")
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    att_id = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=headers
+        )
+    ).json()["id"]
+
+    post_resp = await committing_client.post(
+        "/forum/posts",
+        json={**POST_BODY, "attachment_ids": [att_id]},
+        headers=headers,
+    )
+    assert post_resp.status_code == 201, post_resp.text
+    post = post_resp.json()
+    assert len(post["attachments"]) == 1
+    assert post["attachments"][0]["id"] == att_id
+
+    # Attachment now linked — claiming again should 404
+    post2_resp = await committing_client.post(
+        "/forum/posts",
+        json={**POST_BODY, "attachment_ids": [att_id]},
+        headers=headers,
+    )
+    assert post2_resp.status_code == 404
+
+
+async def test_comment_with_attachment(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    headers = await signup_headers(committing_client, "comment_att@example.com")
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    att_id = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=headers
+        )
+    ).json()["id"]
+
+    post_id = (
+        await committing_client.post(
+            "/forum/posts", json=POST_BODY, headers=headers
+        )
+    ).json()["id"]
+
+    comment_resp = await committing_client.post(
+        f"/forum/posts/{post_id}/comments",
+        json={"body": "with attachment", "attachment_ids": [att_id]},
+        headers=headers,
+    )
+    assert comment_resp.status_code == 201, comment_resp.text
+    assert len(comment_resp.json()["attachments"]) == 1
+
+
+async def test_cannot_claim_other_users_attachment(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    alice = await signup_headers(committing_client, "alice2@example.com")
+    mallory = await signup_headers(committing_client, "mallory2@example.com")
+
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    att_id = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=alice
+        )
+    ).json()["id"]
+
+    resp = await committing_client.post(
+        "/forum/posts",
+        json={**POST_BODY, "attachment_ids": [att_id]},
+        headers=mallory,
+    )
+    assert resp.status_code == 404
+
+
+async def test_upload_unsupported_type(
+    client: httpx.AsyncClient,
+    auth_headers: dict,
+    fake_storage: dict,
+) -> None:
+    files = {"file": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")}
+    resp = await client.post("/forum/attachments", files=files, headers=auth_headers)
+    assert resp.status_code == 415
+
+
+async def test_upload_file_too_large(
+    client: httpx.AsyncClient,
+    auth_headers: dict,
+    fake_storage: dict,
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    import pytest
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "max_image_bytes", 10)
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    resp = await client.post("/forum/attachments", files=files, headers=auth_headers)
+    assert resp.status_code == 413
+
+
+async def test_delete_post_removes_attachment_objects(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    headers = await signup_headers(committing_client, "del_att@example.com")
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    att_id = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=headers
+        )
+    ).json()["id"]
+
+    post_id = (
+        await committing_client.post(
+            "/forum/posts",
+            json={**POST_BODY, "attachment_ids": [att_id]},
+            headers=headers,
+        )
+    ).json()["id"]
+
+    # Storage has keys before delete
+    assert any(f"attachments/{att_id}" in k for k in fake_storage)
+
+    del_resp = await committing_client.delete(
+        f"/forum/posts/{post_id}", headers=headers
+    )
+    assert del_resp.status_code == 204
+
+    # Object keys removed from fake store
+    assert not any(f"attachments/{att_id}" in k for k in fake_storage)

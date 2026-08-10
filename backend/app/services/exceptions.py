@@ -39,3 +39,27 @@ class InvalidInputError(DomainError):
     def __init__(self, detail: str = "invalid input") -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class FileTooLargeError(DomainError):
+    """Uploaded file exceeds the size limit."""
+
+    def __init__(self, detail: str = "file too large") -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class UnsupportedMediaTypeError(DomainError):
+    """Uploaded file's MIME type is not allowed."""
+
+    def __init__(self, detail: str = "unsupported media type") -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class TooManyAttachmentsError(DomainError):
+    """Post or comment would exceed the attachment limit."""
+
+    def __init__(self, detail: str = "too many attachments") -> None:
+        super().__init__(detail)
+        self.detail = detail
