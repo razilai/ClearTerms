@@ -44,6 +44,39 @@ services:
         mc anonymous set download local/clearterms-media
       "
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # GPU passthrough (NVIDIA): uncomment to run the model on GPU instead of CPU.
+    # Needs the NVIDIA Container Toolkit on the host. CPU works out of the box but
+    # is slow for a 4B model.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # One-shot: pull the model the agent uses (must match backend agent_model /
+  # model_version in app/core/config.py). Bump both when you change the model.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c", "ollama pull qwen3:4b"]
+
   backend:
     build:
       context: ./backend
@@ -51,7 +84,8 @@ services:
     environment:
       # Reach the db service by name; container-to-container, so port 5432 not localhost.
       CLEARTERMS_DATABASE_URL: postgresql+asyncpg://clearterms:clearterms@db:5432/clearterms
-      CLEARTERMS_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Reach Ollama by service name now that it runs in the compose graph.
+      CLEARTERMS_OLLAMA_BASE_URL: http://ollama:11434
       # MinIO — internal endpoint for backend put/get; public endpoint for presigned URLs
       CLEARTERMS_S3_ENDPOINT_URL: http://minio:9000
       CLEARTERMS_S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
@@ -62,10 +96,21 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    extra_hosts:
-      # Let the container reach an Ollama running on the host.
-      - "host.docker.internal:host-gateway"
+      ollama-pull:
+        # Wait for the model to be present before serving, so the first analyze
+        # doesn't hit a missing-model error.
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"   # http://localhost:5173 — matches the dev port
+    depends_on:
+      - backend
 
 volumes:
   pgdata:
   minio_data:
+  ollama_data:
