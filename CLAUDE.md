@@ -85,6 +85,24 @@ does **not exist yet**, and the agent still returns dummy scores (see below).
   unconfigured categories default to weight 1.0.
 - **Shared deps** (`api/deps.py`): `SessionDep`, `CurrentUserDep`.
 - **Config** (`core/config.py`): pydantic-settings, `CLEARTERMS_` env prefix.
+- **Analysis queue** (`services/queue.py`): a bounded `asyncio.PriorityQueue`
+  drained by `settings.analysis_workers` worker tasks, started and stopped from
+  the lifespan hook in `app/main.py`. The queue **owns the session each job
+  runs on** — callers must never close over their request session, since a job
+  can wait a long time and a request session holds a pooled connection and,
+  mid-transaction, locks for the whole wait; getting this wrong reintroduces
+  the deadlock the design exists to avoid. Priority is the submitter's count of
+  in-flight jobs, so everyone's first job beats everyone's second — no aging
+  term is needed, since a job at priority N only waits behind jobs at priority
+  < N and each user contributes at most one job per level, so nothing starves.
+  A full queue raises `QueueFullError` (503); waiting past
+  `settings.analysis_queue_timeout_seconds` raises `QueueTimeoutError` (504),
+  with the job left running via `asyncio.shield` so the cache still gets
+  populated and a retry is likely a cache hit. Cache hits never enqueue.
+  Caveat: the queue is per process — multiple uvicorn workers each get their
+  own, so the concurrency cap multiplies and fairness only holds within a
+  process; fixing that needs an out-of-process broker, which means expressing
+  jobs as data rather than callables.
 - **Frontend** (`frontend/`): login/signup, forum, **and analysis** — analyze,
   history, analysis-detail, and settings (preference weights) pages against the
   routes above. Session = JWT + email in localStorage (no `/me` endpoint; ownership
@@ -98,8 +116,6 @@ does **not exist yet**, and the agent still returns dummy scores (see below).
 - **Agent** (`agent/classifier.py::analyze`) returns dummy scores (1 for every
   category) so the pipeline runs end-to-end without Ollama — the real chunk-and-
   classify path is still TODO.
-- **Priority queue** (`services/queue.py`): `submit` runs the job inline; per-user
-  priority scheduling is a later phase.
 - `services/forum.py::check_rate_limit` raises `NotImplementedError` (phase-2
   guardrail, not wired yet).
 
