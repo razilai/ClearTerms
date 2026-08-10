@@ -18,7 +18,12 @@ from app.db.repos import documents, history, preferences, users
 from app.models import Analysis, Document, Finding, Preference, User
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
-from app.services.exceptions import InvalidTokenError, QueueFullError, QueueTimeoutError
+from app.services.exceptions import (
+    InvalidTokenError,
+    QueueFullError,
+    QueueShutdownError,
+    QueueTimeoutError,
+)
 from app.services.queue import AnalysisQueue
 
 
@@ -695,8 +700,83 @@ async def test_stop_cancels_workers(
 ) -> None:
     q = AnalysisQueue()
     await q.start(file_session_factory, workers=2)
+    # Captured before stop() empties the list: asserting only `_workers == []`
+    # restates stop()'s own assignment, so it would pass no matter what stop()
+    # did to the tasks. The claim in the name is that they were cancelled.
+    workers = list(q._workers)
     await q.stop()
     assert q._workers == []
+    assert workers and all(worker.cancelled() for worker in workers)
+
+
+async def test_stop_fails_waiting_callers_instead_of_abandoning_them(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Shutdown settles everyone: the job mid-run and the one still queued.
+
+    Both used to be abandoned — the running one's future was cancelled (which
+    reaches the caller as CancelledError, i.e. a dropped connection rather than
+    a response), and the queued one was left untouched on a queue the next
+    start() replaces, so its caller parked until its own timeout for nothing.
+
+    timeout=2.0 rather than the 300s default purely so this fails fast instead
+    of hanging if the shutdown path regresses; nothing here needs 2s.
+    """
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1, timeout=2.0)
+    release = asyncio.Event()
+
+    async def blocker(session: AsyncSession) -> None:
+        await release.wait()
+
+    async def never_runs(session: AsyncSession) -> None:
+        raise AssertionError("a queued job must not run after stop()")
+
+    # Staggered, as in the sibling tests: the first submission has to reach the
+    # worker so the second genuinely sits in the queue rather than in a worker.
+    running = asyncio.create_task(q.submit(user_id=1, job=blocker))
+    await asyncio.sleep(0.05)
+    queued = asyncio.create_task(q.submit(user_id=2, job=never_runs))
+    await asyncio.sleep(0.05)
+
+    await q.stop()
+
+    with pytest.raises(QueueShutdownError):
+        await queued
+    with pytest.raises(QueueShutdownError):
+        await running
+    # The drain releases the queued entry's count, the worker's finally the
+    # running one's; neither may be left behind.
+    assert q._pending == {}
+
+
+async def test_submit_after_stop_is_rejected_rather_than_parked(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A stopped queue must not accept work no worker will ever take.
+
+    The message distinguishes this from the never-started case: both leave
+    _queue None, but they are different bugs to go looking for.
+    """
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1, timeout=1.0)
+    await q.stop()
+
+    async def job(session: AsyncSession) -> None:
+        return None
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        await q.submit(user_id=1, job=job)
+
+
+async def test_submit_before_start_says_start_was_never_called() -> None:
+    q = AnalysisQueue()
+
+    async def job(session: AsyncSession) -> None:
+        return None
+
+    with pytest.raises(RuntimeError, match=r"start\(\) was never called"):
+        await q.submit(user_id=1, job=job)
 
 
 async def test_submit_raises_when_the_queue_is_full(
@@ -1012,6 +1092,7 @@ async def test_analyze_issues_no_write_before_submitting(
     await q.start(file_session_factory, workers=1)
     statements: list[str] = []
     writes_at_submit: list[str] = []
+    submitted = False
 
     def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
         statements.append(statement)
@@ -1027,6 +1108,8 @@ async def test_analyze_issues_no_write_before_submitting(
 
             class SpyQueue:
                 async def submit(self, user_id: int, job: object) -> object:
+                    nonlocal submitted
+                    submitted = True
                     writes_at_submit.extend(
                         s
                         for s in statements
@@ -1047,6 +1130,11 @@ async def test_analyze_issues_no_write_before_submitting(
         event.remove(engine.sync_engine, "before_cursor_execute", _record)
         await q.stop()
 
+    # First: the assertion below is only meaningful if analyze went through the
+    # queue at all. writes_at_submit is populated inside SpyQueue.submit, so a
+    # refactor that stopped submitting would satisfy `== []` trivially and
+    # leave the invariant this test exists for unguarded.
+    assert submitted, "analyze did not submit to the queue"
     assert writes_at_submit == []
 
 
