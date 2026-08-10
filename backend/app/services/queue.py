@@ -6,7 +6,9 @@ Two jobs, deliberately separated:
   a burst of requests cannot swamp Ollama;
 * **fairness** — when a slot frees, the waiting job whose user has the fewest
   jobs in flight goes next, so one user submitting twenty documents cannot make
-  everyone else wait behind all twenty.
+  everyone else wait behind all twenty. Tempered by an ageing term so a busy
+  user's later jobs are overtaken a bounded number of times rather than
+  indefinitely; see ``AnalysisQueue._priority_for``.
 
 The queue owns the database session a job runs on. Callers must not close over
 their request-scoped session: a job can sit here for a long time, and a request
@@ -41,7 +43,8 @@ logger = logging.getLogger(__name__)
 # never imports app.services.analysis (which imports this one).
 Job = Callable[[AsyncSession], Awaitable[T]]
 
-# One queued item: (priority, sequence, user_id, job, the caller's future).
+# One queued item: (score, sequence, user_id, job, the caller's future), where
+# score = priority * alpha + sequence — see _priority_for.
 # Spelled out rather than left bare so the worker loop's 5-tuple unpack is
 # actually checked — that unpack is the one place a shape mismatch would be a
 # runtime crash. Any, not T: entries of different result types share one queue.
@@ -63,10 +66,9 @@ class AnalysisQueue:
         # Only so submit() can tell "never started" from "already stopped" —
         # both leave _queue None, but they are different bugs to chase.
         self._ever_started = False
-        # Monotonic tie-breaker. PriorityQueue compares tuples element by
-        # element, so two entries with equal priority would go on to compare the
-        # job callables themselves and raise TypeError. It also makes ordering
-        # FIFO within a priority level.
+        # Monotonic arrival counter, doing two jobs: it is the ageing term in
+        # each entry's score, and the tie-break that keeps PriorityQueue from
+        # falling through to compare job callables (which raises TypeError).
         self._sequence = itertools.count()
         # In-flight jobs per user (queued + running); the priority policy.
         self._pending: defaultdict[int, int] = defaultdict(int)
@@ -177,7 +179,15 @@ class AnalysisQueue:
             )
 
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
-        entry = (self._priority_for(user_id), next(self._sequence), user_id, job, future)
+        # seq is used twice on purpose: once inside the score, as the ageing
+        # term, and once as the element after it. Scores collide (priority 0 at
+        # seq alpha ties priority 1 at seq 0), and PriorityQueue falls through to
+        # the next tuple element on a tie — seq is unique, so comparison stops
+        # there and never reaches the job callable, which would raise TypeError.
+        # It also settles ties in favour of the older entry.
+        seq = next(self._sequence)
+        score = self._priority_for(user_id) * settings.analysis_queue_alpha + seq
+        entry = (score, seq, user_id, job, future)
         try:
             # Non-blocking: a caller that cannot even get a queue slot is shed
             # immediately rather than made to wait for the right to wait.
@@ -198,26 +208,41 @@ class AnalysisQueue:
             raise QueueTimeoutError() from None
 
     def _priority_for(self, user_id: int) -> int:
-        """Lower runs sooner: a user's Nth in-flight job sits at priority N.
+        """A user's Nth in-flight job sits at priority N. Lower runs sooner.
 
-        So every user's first job outranks every user's second, and a burst from
-        one user cannot make everyone else wait behind all of it.
+        This is only half the ordering — submit() turns it into the score the
+        queue actually sorts on::
 
-        Nothing starves — but not because a user holds only one entry per
-        level; they can hold several. With one worker: A submits j1 (count 0
-        -> priority 0), the worker takes j1 but the count stays 1, so A's j2
-        goes in at priority 1; j1 finishes and releases, so A's j3 *also* goes
-        in at priority 1. Two entries of A's at the same level, repeatable per
-        completed job.
+            score = priority * settings.analysis_queue_alpha + sequence
 
-        The real argument is sequence ordering at the top level. Priority 0
-        requires _pending == 0, so a user never has more than one *queued*
-        priority-0 entry at a time, and the monotonic _sequence tie-break keeps
-        earlier priority-0 arrivals ahead of later ones. A priority-0 entry
-        therefore waits behind a fixed, only-shrinking set — the priority-0
-        entries that were already queued when it arrived, at most one per other
-        user — and nothing enqueued afterwards can overtake it. Every user's
-        first job is served after a bounded wait, so no aging term is needed.
+        Priority alone would starve. It says "your second job yields to
+        everyone's first", which under a steady stream of *new* users means a
+        second job yields forever: each newcomer arrives at priority 0 and
+        overtakes it, and there is no bound on how many newcomers there are.
+
+        The sequence term fixes that, because sequence is itself a clock — it
+        counts arrivals, so every new entry ages the ones already queued
+        relative to it. An entry with priority p at sequence s scores
+        p*alpha + s; a later priority-0 arrival at sequence s' beats it only
+        while s' < p*alpha + s, i.e. for the next p*alpha arrivals. After that
+        nothing new can ever overtake it. Bounded wait, with no assumption
+        about arrival timing and no wall clock involved.
+
+        Note what that bound costs, since it is a real policy choice rather
+        than an implementation detail: "everyone's first job beats everyone's
+        second" is now only true for the first alpha arrivals. Past that, a
+        long-waiting second job wins. Both properties cannot hold at once —
+        strict first-beats-second is exactly what starves second jobs — and
+        this trades the strict version for the bound deliberately.
+
+        Ageing costs nothing to apply: entries already queued age uniformly,
+        which leaves their order among themselves untouched, so it only shows
+        up against future arrivals. Adding the term to newcomers is the same
+        thing as decrementing everyone else, and needs no traversal of the heap.
+
+        A user's own jobs never reorder: sequence increases with every
+        submission, so their scores do too, even when a completed job drops
+        their priority back to 0 in between.
 
         Uses .get() rather than the subscript: this runs before put_nowait, so
         a rejected submission (QueueFullError) never reaches the increment or

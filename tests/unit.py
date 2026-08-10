@@ -940,11 +940,81 @@ async def test_a_new_users_first_job_beats_a_busy_users_backlog(
         release.set()
         await q.stop()
 
-    # Alice's first job was already at priority 0 before Bob arrived, so it
-    # keeps its place; Bob's single job then beats alice1..alice3.
+    # Scores, with alpha = 10 and the blocker taking sequence 0:
+    #   alice0  priority 0, seq 1 ->  1
+    #   alice1  priority 1, seq 2 -> 12
+    #   alice2  priority 2, seq 3 -> 23
+    #   alice3  priority 3, seq 4 -> 34
+    #   bob0    priority 0, seq 5 ->  5
+    # Alice's first was already queued at priority 0 before Bob arrived, so it
+    # keeps its place; Bob's single job then beats alice1..alice3. Bob is well
+    # inside the alpha-arrival window, so ageing does not come into it here —
+    # test_ageing_bounds_how_often_a_later_job_is_overtaken covers that.
     assert order[0] == "alice0"
     assert order[1] == "bob0"
     assert order[2:] == ["alice1", "alice2", "alice3"]
+
+
+async def test_ageing_bounds_how_often_a_later_job_is_overtaken(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A priority-p job yields to at most p*alpha newcomers, then wins forever.
+
+    Without the sequence term in the score this would starve: every newcomer
+    arrives at priority 0 and would overtake a priority-1 job indefinitely.
+    """
+    alpha = settings.analysis_queue_alpha
+    q = AnalysisQueue()
+    await q.start(file_session_factory, workers=1)
+    order: list[str] = []
+    release = asyncio.Event()
+    try:
+
+        def make(label: str) -> Callable[[AsyncSession], Awaitable[None]]:
+            async def job(session: AsyncSession) -> None:
+                order.append(label)
+
+            return job
+
+        async def blocker(session: AsyncSession) -> None:
+            await release.wait()
+
+        # Occupy the single worker (sequence 0) so everything else queues.
+        held = asyncio.create_task(q.submit(user_id=99, job=blocker))
+        await asyncio.sleep(0.05)
+
+        # Alice: first job scores 0*alpha + 1 = 1, second 1*alpha + 2.
+        alice = [
+            asyncio.create_task(q.submit(user_id=1, job=make(f"alice{n}")))
+            for n in range(2)
+        ]
+        await asyncio.sleep(0.05)
+
+        # Enough fresh users to run past the bound. Each is a first job, so it
+        # scores exactly its own sequence number.
+        newcomers = [
+            asyncio.create_task(q.submit(user_id=100 + n, job=make(f"new{n}")))
+            for n in range(alpha + 2)
+        ]
+        await asyncio.sleep(0.05)
+
+        release.set()
+        await asyncio.gather(held, *alice, *newcomers)
+    finally:
+        release.set()
+        await q.stop()
+
+    assert order[0] == "alice0"
+    # alice1 scores alpha + 2; newcomers score their sequence, 3 upward, so
+    # exactly those with sequence < alpha + 2 get in front — alpha - 1 of them.
+    overtaking = order[1 : order.index("alice1")]
+    assert len(overtaking) == alpha - 1
+    assert all(label.startswith("new") for label in overtaking)
+    # The rest lose, which is the property that makes starvation impossible:
+    # arrivals past the bound can never overtake, however many of them there are.
+    assert order[order.index("alice1") + 1 :] == [
+        f"new{n}" for n in range(alpha - 1, alpha + 2)
+    ]
 
 
 async def test_pending_counter_returns_to_zero_after_jobs_finish(
