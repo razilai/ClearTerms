@@ -15,7 +15,6 @@ import hashlib
 import unicodedata
 from functools import partial
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import classifier
@@ -140,51 +139,6 @@ async def run_analysis(session: AsyncSession, document: Document) -> list[Analys
     return await documents_repo.save_analyses(session, analyses)
 
 
-async def get_or_create_document(
-    session: AsyncSession,
-    text_hash: str,
-    url: str | None,
-    normalized_text: str,
-    original_text: str,
-) -> Document:
-    """Fetch the document for ``text_hash``, inserting it if it is not there yet.
-
-    Two callers can miss the cache for the same text and both enqueue a job, so
-    the insert can lose a race against the unique index on documents.text_hash.
-    The loser rolls back and re-reads rather than failing the request.
-
-    PRECONDITION: ``session`` must have no other pending work. A failed flush
-    leaves the session unusable until something is rolled back, and the
-    recovery below rolls back the whole transaction, not just the failed
-    insert — so anything else the caller had uncommitted is discarded too.
-    The queue's per-job session satisfies this: `analyze_document_job` calls
-    this first, before writing anything else.
-
-    Deliberately NOT scoped with a SAVEPOINT (session.begin_nested), which is
-    the usual way to narrow a flush-error recovery. Under pysqlite that would
-    change production behaviour to fix a test-only artifact: pysqlite defers
-    BEGIN until the first DML, so on a session that has issued only the SELECT
-    above, the SAVEPOINT itself opens the transaction and RELEASE therefore
-    *commits* the insert on the spot. Every analysis that then failed — the
-    common case when Ollama is down — would leave behind a Document row
-    holding its original_text, up to settings.max_analyze_bytes each, instead
-    of rolling back with the job.
-    """
-    document = await documents_repo.get_by_hash(session, text_hash)
-    if document is not None:
-        return document
-    try:
-        return await documents_repo.create(
-            session, text_hash, url, normalized_text, original_text=original_text
-        )
-    except IntegrityError:
-        await session.rollback()
-        document = await documents_repo.get_by_hash(session, text_hash)
-        if document is None:
-            raise
-        return document
-
-
 async def analyze_document_job(
     session: AsyncSession,
     *,
@@ -199,11 +153,19 @@ async def analyze_document_job(
     reference to the caller's request session, which would otherwise stay open
     (holding a connection, and locks) for the whole queue wait.
 
+    Calls documents_repo.create directly: it is already race-safe via ON CONFLICT
+    DO NOTHING + re-read, which matters because two callers can miss the cache
+    for the same text and both enqueue. Catching IntegrityError around it instead
+    would be both dead code (ON CONFLICT means no unique violation is raised) and
+    wrong in principle on Postgres, where a violation aborts the surrounding
+    transaction — so the recovery would have to roll back work this job may
+    already have done.
+
     Re-checks the cache: by the time this runs, an identical job submitted just
     before it may already have produced the scores.
     """
-    document = await get_or_create_document(
-        session, text_hash, url, normalized_text, original_text
+    document = await documents_repo.create(
+        session, text_hash, url, normalized_text, original_text=original_text
     )
     analyses = await documents_repo.get_analyses(
         session, document.id, settings.model_version

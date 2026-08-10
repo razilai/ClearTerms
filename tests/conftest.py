@@ -317,11 +317,12 @@ async def file_session_factory(
     The `session` fixture's savepoint harness binds every session to one shared
     connection, so a worker "opening its own session" would silently join the
     caller's transaction — hiding exactly the cross-session behaviour the queue
-    has to get right, above all the get-or-create insert race whose IntegrityError
-    recovery is written against Postgres's unique-constraint semantics. Testing
-    that on SQLite would prove the wrong dialect, so this stays on Postgres: a
-    private database, created and dropped per test, whose sessions really commit
-    on independent pooled connections.
+    has to get right, above all the insert race two concurrent jobs for the same
+    text_hash run into (documents_repo.create resolves it with ON CONFLICT DO
+    NOTHING + re-read, which is Postgres-specific). Testing that on SQLite would
+    prove the wrong dialect, so this stays on Postgres: a private database,
+    created and dropped per test, whose sessions really commit on independent
+    pooled connections.
     """
     db_name = f"queue_test_{uuid.uuid4().hex}"
 

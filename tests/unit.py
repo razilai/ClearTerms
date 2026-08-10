@@ -1139,19 +1139,11 @@ async def test_a_fresh_users_rejected_submission_leaves_no_stray_key(
     assert q._pending == {}
 
 
-# --- analysis pipeline: get_or_create_document + queue wiring ---------------
-
-
-async def test_get_or_create_document_is_idempotent(session: AsyncSession) -> None:
-    from app.services.analysis import get_or_create_document
-
-    first = await get_or_create_document(
-        session, "hash-abc", "https://example.com/tos", "normalized", "Original"
-    )
-    second = await get_or_create_document(
-        session, "hash-abc", "https://example.com/tos", "normalized", "Original"
-    )
-    assert first.id == second.id
+# --- analysis pipeline: queue wiring ----------------------------------------
+#
+# Document get-or-create is not tested here: analyze_document_job calls
+# documents_repo.create directly, whose ON CONFLICT DO NOTHING + re-read is
+# covered by test_create_document_duplicate_hash_returns_existing above.
 
 
 async def test_analyze_issues_no_write_before_submitting(
