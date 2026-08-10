@@ -484,9 +484,10 @@ async def test_writes_persist_across_requests(
 
 # --- attachments ---
 #
-# Storage is faked (in-memory dict) and the processor is a synchronous stub that
-# immediately marks attachments ready. No MinIO, no ffmpeg, no Pillow needed in
-# the default test suite. Real processing is exercised behind the `slow` marker.
+# Storage is faked (in-memory dict) and the processor is an async stub that
+# immediately marks attachments ready. No MinIO or ffmpeg needed in the default
+# suite. `test_upload_runs_real_image_processing` opts out of the stub to drive
+# the real Pillow pipeline (still against the in-memory store, so no MinIO).
 
 
 async def _upload_png(
@@ -674,3 +675,98 @@ async def test_delete_post_removes_attachment_objects(
 
     # Object keys removed from fake store
     assert not any(f"attachments/{att_id}" in k for k in fake_storage)
+
+
+async def test_upload_commits_before_scheduling_processing(
+    session: AsyncSession,
+    fake_storage: dict,
+) -> None:
+    """Regression: the attachment row must be committed *before* the background
+    processor is scheduled.
+
+    In production the processor opens its own session on a separate pooled
+    connection, so an uncommitted row is invisible to it: it reads ``None`` and
+    returns, leaving the attachment stuck ``pending`` forever (the frontend then
+    shows an endless loading skeleton). FastAPI runs BackgroundTasks before the
+    request session's own commit, so ``upload_attachment`` must commit itself.
+
+    The shared-connection test harness can't reproduce the cross-connection
+    invisibility, so this asserts the ordering directly: at the moment the task
+    is scheduled the session must no longer be in a transaction (i.e. it has
+    committed). ``in_transaction()`` is True after a flush, False after commit.
+    """
+    import io
+
+    from starlette.datastructures import Headers, UploadFile
+
+    from app.db.repos import users as users_repo
+    from app.services import forum as forum_service
+
+    user = await users_repo.create(session, "committer@example.com", "hash")
+
+    in_transaction_at_schedule: list[bool] = []
+
+    class _SpyBackgroundTasks:
+        def add_task(self, func, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            in_transaction_at_schedule.append(session.in_transaction())
+
+    upload = UploadFile(
+        file=io.BytesIO(_TINY_PNG),
+        filename="t.png",
+        headers=Headers({"content-type": "image/png"}),
+    )
+
+    await forum_service.upload_attachment(session, user, upload, _SpyBackgroundTasks())
+
+    assert in_transaction_at_schedule == [False], (
+        "attachment must be committed before the processing task is scheduled, "
+        "or the out-of-band worker reads None and it stays pending forever"
+    )
+
+
+async def test_upload_runs_real_image_processing(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """End-to-end with the real Pillow pipeline (not the stub): upload a PNG,
+    let the actual processor run, and assert it lands ``ready`` with a valid
+    WebP display object in storage. Guards the whole upload->process->serve path
+    a user hits, without needing MinIO (storage is the in-memory fake).
+    """
+    import io
+
+    from PIL import Image
+
+    from app.services import media as media_service
+
+    # Opt out of the autouse stub processor; use the real one for this test.
+    # (_TINY_PNG is header-valid but not fully decodable — build a real image so
+    # Pillow's decoder, resize, and WebP encode all actually run.)
+    media_service.set_processor(None)
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(buf, format="PNG")
+    png = buf.getvalue()
+
+    headers = await signup_headers(committing_client, "realproc@example.com")
+    files = {"file": ("img.png", png, "image/png")}
+    resp = await committing_client.post(
+        "/forum/attachments", files=files, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    attachment_id = resp.json()["id"]
+
+    poll = await committing_client.get(
+        f"/forum/attachments/{attachment_id}", headers=headers
+    )
+    assert poll.status_code == 200
+    body = poll.json()
+    assert body["status"] == "ready", body
+    assert body["display_url"] is not None
+    assert body["thumbnail_url"] is not None
+    assert body["width"] == 8 and body["height"] == 8
+
+    # Real processing wrote genuine WebP bytes to the (fake) object store.
+    display_key = f"attachments/{attachment_id}/display.webp"
+    assert display_key in fake_storage
+    blob = fake_storage[display_key]
+    assert blob[:4] == b"RIFF" and blob[8:12] == b"WEBP", "expected a WebP display object"

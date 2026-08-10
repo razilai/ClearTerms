@@ -46,10 +46,10 @@ class Settings(BaseSettings):
 
     # Object storage (MinIO in dev via docker-compose; swap endpoint env vars for
     # real S3 in prod — the boto3 client is endpoint-agnostic).
-    # s3_endpoint_url is the internal URL the backend container uses for put/get.
-    # s3_public_endpoint_url is the host the browser resolves presigned GET URLs
-    # against (MinIO's exposed port; real S3 = same as endpoint_url, omit field).
-    s3_endpoint_url: str = "http://minio:9000"
+    # s3_endpoint_url: backend→storage (default localhost for bare uvicorn; docker-compose
+    #   overrides to http://minio:9000 so the container reaches MinIO by service name).
+    # s3_public_endpoint_url: host the browser resolves presigned GET URLs against.
+    s3_endpoint_url: str = "http://localhost:9000"
     s3_public_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "clearterms-media"
     s3_access_key: str = "minioadmin"
