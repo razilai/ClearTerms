@@ -15,6 +15,13 @@ The `session` fixture yields a session bound to that transaction; the `client`
 fixture overrides `app.db.engine.get_session` to hand every request that same
 session, so writes a request flushes stay visible to later requests in the test
 without needing a commit (the app's repos flush; get_session owns the commit).
+
+`client` also owns an analysis-queue lifecycle — start on entry, stop on exit —
+because httpx.ASGITransport does not run FastAPI's lifespan, which is what
+starts the queue in production. That makes it a per-test resource for the ~100
+tests that take the fixture, not just the ones about analysis: a test that
+leaks a worker task leaks it into a database engine disposed moments later,
+which is why the teardown is in a `finally`.
 """
 
 import asyncio
@@ -146,6 +153,16 @@ async def client(
         yield session
 
     app.dependency_overrides[get_session] = _override_get_session
+    # Shared-connection caveat, specific to this fixture: StaticPool hands every
+    # checkout the same DBAPI connection, so a queue worker's session and the
+    # request session here emit BEGIN/COMMIT/ROLLBACK on ONE connection. A job
+    # that rolls back — get_or_create_document does exactly that to recover from
+    # a lost insert race — therefore rolls back this test's request session too,
+    # discarding e.g. the user auth_headers created. Production never shares a
+    # connection this way. It is why the get-or-create race is tested at the
+    # service layer on file_session_factory (see
+    # test_concurrent_jobs_for_the_same_text_share_one_document) rather than by
+    # driving two concurrent identical-hash requests through this client.
     # httpx.ASGITransport does not run FastAPI's lifespan, so nothing else
     # starts the queue for these tests. The worker opens its own session, so it
     # binds to the same per-test db_connection (savepoint mode) as `session`: a

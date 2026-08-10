@@ -50,8 +50,10 @@ class Settings(BaseSettings):
     # Waiting jobs allowed before /analyze sheds load with a 503. Sized so a
     # queued caller's wait stays bounded by maxsize x per-job time.
     analysis_queue_maxsize: int = 100
-    # How long a caller waits for its turn before giving up with a 504. The job
-    # itself is NOT cancelled — it keeps running and still populates the cache.
+    # How long a caller waits for a *result* before giving up with a 504. Not
+    # just queue time: the wait wraps the whole submit, so this bounds time
+    # queued plus time running. The job itself is NOT cancelled — it keeps
+    # running and still populates the cache.
     analysis_queue_timeout_seconds: float = 300.0
 
     # Object storage (MinIO in dev via docker-compose; swap endpoint env vars for
