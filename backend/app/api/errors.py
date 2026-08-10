@@ -12,6 +12,7 @@ from app.services.exceptions import (
     NotFoundError,
     NotOwnerError,
     QueueFullError,
+    QueueShutdownError,
     QueueTimeoutError,
     TooManyAttachmentsError,
     UnsupportedMediaTypeError,
@@ -52,6 +53,14 @@ def register_exception_handlers(app: FastAPI) -> None:
                 return JSONResponse(
                     status_code=503,
                     content={"detail": "Analysis queue is full, try again shortly"},
+                    headers={"Retry-After": "30"},
+                )
+            case QueueShutdownError():
+                # Same shape as QueueFullError: the service is temporarily
+                # unable to handle the request and the client should come back.
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Analysis is shutting down, try again shortly"},
                     headers={"Retry-After": "30"},
                 )
             case QueueTimeoutError():

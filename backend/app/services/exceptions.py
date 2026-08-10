@@ -76,3 +76,13 @@ class QueueTimeoutError(DomainError):
     in progress) and still populates the analysis cache, so a retry is
     likely to be a cache hit.
     """
+
+
+class QueueShutdownError(DomainError):
+    """The analysis queue stopped while the caller was waiting for its job.
+
+    Unlike QueueTimeoutError the work is genuinely gone: the job was either
+    still queued when the pool went away, or was cancelled mid-run. Nothing
+    was cached, so a retry has to redo it — but the queue is stopping, so it
+    is the caller's next request (after a restart) that will succeed.
+    """

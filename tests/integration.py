@@ -806,6 +806,15 @@ async def test_queue_full_maps_to_503() -> None:
     assert resp.headers["Retry-After"] == "30"
 
 
+async def test_queue_shutdown_maps_to_503() -> None:
+    from app.services.exceptions import QueueShutdownError
+
+    resp = await _probe_app_response(QueueShutdownError())
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Analysis is shutting down, try again shortly"
+    assert resp.headers["Retry-After"] == "30"
+
+
 async def test_queue_timeout_maps_to_504() -> None:
     from app.services.exceptions import QueueTimeoutError
 
@@ -818,9 +827,6 @@ async def test_queue_timeout_maps_to_504() -> None:
 
 
 # --- analysis pipeline through a live queue ---------------------------------
-#
-# httpx.ASGITransport does not run FastAPI's lifespan, so the queue is not
-# started for tests by default; each test that needs it starts it explicitly.
 
 
 async def test_analyze_runs_through_a_live_queue(
