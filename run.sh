@@ -17,18 +17,22 @@ mode="${1:-dev}"
 model="${2:-4b}"
 
 case "$model" in
-  4b)
-    agent_model="gemma3:4b";    model_version="gemma3-4b-v1" ;;
-  0.5b)
-    agent_model="qwen2.5:0.5b"; model_version="qwen2.5-0.5b-v1" ;;
-  *)
+4b)
+    agent_model="gemma3:4b"
+    model_version="gemma3-4b-v1"
+    ;;
+0.5b)
+    agent_model="qwen2.5:0.5b"
+    model_version="qwen2.5-0.5b-v1"
+    ;;
+*)
     echo "usage: $0 [dev|docker] [4b|0.5b]" >&2
     exit 2
     ;;
 esac
 
 case "$mode" in
-  docker)
+docker)
     # Free ports first: dev mode leaves db/minio containers running detached, and
     # they bind the same ports the full graph wants (5432, 9000/9001). Tear them
     # down so the up below doesn't hit "address already in use".
@@ -44,7 +48,7 @@ case "$mode" in
     exec docker compose "${compose_files[@]}" up --build
     ;;
 
-  dev)
+dev)
     trap 'kill 0' EXIT
 
     # Backend reads the model from env; export before uvicorn so the running
@@ -63,10 +67,10 @@ case "$mode" in
 
     # Start Ollama only if it isn't already serving on :11434.
     if ! curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
-      ollama serve &
-      until curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; do
-        sleep 0.5
-      done
+        ollama serve &
+        until curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; do
+            sleep 0.5
+        done
     fi
 
     # Pull the chosen model on the host Ollama (no-op if already present).
@@ -78,7 +82,7 @@ case "$mode" in
     wait
     ;;
 
-  *)
+*)
     echo "usage: $0 [dev|docker] [4b|0.5b]" >&2
     exit 2
     ;;
