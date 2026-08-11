@@ -68,6 +68,8 @@ services:
 
   # One-shot: pull the model the agent uses (must match backend agent_model /
   # model_version in app/core/config.py). Bump both when you change the model.
+  # To bring the stack up on the tiny 0.5B model instead, layer the override:
+  #   docker compose -f docker-compose.yml -f docker-compose.0.5b.yml up
   ollama-pull:
     image: ollama/ollama:latest
     depends_on:
@@ -75,7 +77,7 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["sh", "-c", "ollama pull qwen3:4b"]
+    entrypoint: ["sh", "-c", "ollama pull gemma3:4b"]
 
   # One-shot: pull the tiny model the non-slow test tier uses (conftest.py
   # LIGHT_MODEL / CLEARTERMS_TEST_AGENT_MODEL). Kept separate from the prod pull

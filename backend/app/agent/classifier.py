@@ -171,10 +171,12 @@ async def classify_chunk(text: str) -> ChunkClassification:
     report. ``deps`` is the raw chunk, so evidence is checked against exactly
     the text the model was shown.
     """
-    # `/no_think` disables qwen3's reasoning chain (model-side, via its chat
-    # template): thinking models emit long prose before any output, which both
-    # costs minutes per chunk on CPU and fights NativeOutput's constrained JSON
-    # decoding. No-op on non-thinking models.
+    # The default model (gemma3:4b) is non-thinking, so this is a plain prompt.
+    # `/no_think` is a model-side switch that suppresses a reasoning chain on
+    # thinking models — harmless text here. Do NOT swap in a hybrid-reasoning
+    # model (qwen3, deepseek-r1, ...): its `<think>` chain fights NativeOutput's
+    # constrained JSON decoding over the /v1 endpoint and the request hangs
+    # forever. Ollama's /v1 can't disable thinking; only native /api/chat can.
     result = await build_agent().run(f"/no_think\nExcerpt:\n{text}", deps=text)
     return densify(result.output.findings)
 
