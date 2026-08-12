@@ -62,15 +62,17 @@ services:
       retries: 10
 
     # GPU passthrough (NVIDIA): uncomment to run the model on GPU instead of CPU.
-    # Needs the NVIDIA Container Toolkit on the host. CPU works out of the box but
-    # is slow for a 4B model.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # Needs a GPU VM size (Azure NC/ND/NV) plus the NVIDIA driver and Container
+    # Toolkit on the host — otherwise compose fails with 'could not select device
+    # driver "nvidia"'. The group VM (Standard_E4ads_v5) has no GPU, so this stays
+    # commented; CPU works out of the box but is slow for a 4B model.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   # One-shot: pull the model the agent uses (must match backend agent_model /
   # model_version in app/core/config.py). Bump both when you change the model.
