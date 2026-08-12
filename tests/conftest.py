@@ -144,7 +144,9 @@ async def session(db_connection: AsyncConnection) -> AsyncIterator[AsyncSession]
 
 @pytest_asyncio.fixture
 async def client(
-    session: AsyncSession, db_connection: AsyncConnection
+    session: AsyncSession,
+    db_connection: AsyncConnection,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[httpx.AsyncClient]:
     from app.db.engine import get_session
     from app.main import app
@@ -154,6 +156,21 @@ async def client(
         yield session
 
     app.dependency_overrides[get_session] = _override_get_session
+    # Bind the global SessionFactory to the per-test connection too. Overriding
+    # get_session only reroutes *request* sessions; a fire-after-response
+    # BackgroundTask (attachment processing) opens its own session straight from
+    # SessionFactory, which otherwise points at the real localhost:5432 — present
+    # on a dev box, absent in CI's testcontainer (random port). Savepoint mode so
+    # the bg task's commits land on the shared connection and roll back at teardown.
+    monkeypatch.setattr(
+        engine_module,
+        "SessionFactory",
+        async_sessionmaker(
+            bind=db_connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
     # Shared-connection caveat, specific to this fixture: StaticPool hands every
     # checkout the same DBAPI connection, so a queue worker's session and the
     # request session here emit BEGIN/COMMIT/ROLLBACK on ONE connection. A job
