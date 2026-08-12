@@ -1,0 +1,19 @@
+# Build context hygiene: keep the image small and keep host secrets/caches out.
+# Without this, `COPY . .` bakes .env (secrets) and .venv (353M) into a layer.
+.venv
+.env
+.env.*
+.git
+.gitignore
+
+# Local tool caches — rebuilt in-image, never needed in the build context.
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+
+# Dev-only / non-runtime
+data
+README.md
+*.log

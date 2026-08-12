@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: clearterms
       POSTGRES_PASSWORD: clearterms
@@ -16,7 +17,9 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # Pinned (not :latest) for reproducible builds — bump deliberately.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -33,7 +36,7 @@ services:
       retries: 10
 
   createbucket:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       minio:
         condition: service_healthy
@@ -45,7 +48,9 @@ services:
       "
 
   ollama:
-    image: ollama/ollama:latest
+    # Pinned by digest (no clean semver tag published) — client version 0.32.6.
+    image: ollama/ollama@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
+    restart: unless-stopped
     ports:
       - "11434:11434"
     volumes:
@@ -71,7 +76,7 @@ services:
   # To bring the stack up on the tiny 0.5B model instead, layer the override:
   #   docker compose -f docker-compose.yml -f docker-compose.0.5b.yml up
   ollama-pull:
-    image: ollama/ollama:latest
+    image: ollama/ollama@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
     depends_on:
       ollama:
         condition: service_healthy
@@ -84,7 +89,7 @@ services:
   # so `docker compose up` yields a test-ready Ollama; tests run on the host and
   # reach it via the exposed :11434. Bump alongside conftest's LIGHT_MODEL.
   ollama-pull-test:
-    image: ollama/ollama:latest
+    image: ollama/ollama@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
     depends_on:
       ollama:
         condition: service_healthy
@@ -96,6 +101,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       # Reach the db service by name; container-to-container, so port 5432 not localhost.
       CLEARTERMS_DATABASE_URL: postgresql+asyncpg://clearterms:clearterms@db:5432/clearterms
@@ -120,10 +126,14 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
-      - "5173:80"   # http://localhost:5173 — matches the dev port
+      - "5173:8080"   # http://localhost:5173 — 8080 = unprivileged nginx port
     depends_on:
-      - backend
+      # Wait until the backend is healthy (HEALTHCHECK in backend/Dockerfile), not
+      # merely started, so early proxied requests don't hit a cold/absent backend.
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
