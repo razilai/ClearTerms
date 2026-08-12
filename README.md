@@ -9,8 +9,6 @@ The extension automatically detects TOS on registration forms and sends the text
 - Standard TOS → the extension shows a "thumbs up" icon.
 - Complex TOS → the extension shows a "thumbs down" icon with a link to the web app for a per-clause breakdown and simplified explanations.
 
-The web app holds your preferences and the history of TOS you've reviewed. A community forum for discussing specific clauses is planned for phase 2.
-
 ## Architecture
 
 **Thin extension, smart backend.**
