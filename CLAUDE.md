@@ -66,11 +66,17 @@ does **not exist yet** (see stubbed list below).
   ≥2.10), decode requires `exp`/`iat`/`sub`, 10s leeway. `POST /auth/signup`,
   `POST /auth/login` (OAuth2 password flow — email in the `username` field).
 - **Forum** (phase 2, `services/forum.py`, `api/forum.py`): posts, comments,
-  likes. Owner-only delete/edit checks live in the service. Services return API
+  votes. Owner-only delete/edit checks live in the service. Services return API
   schemas (not ORM rows) because `author_email` needs a user-email join. Routes:
   `POST/GET /forum/posts`, `GET/DELETE /forum/posts/{id}`,
   `POST /forum/posts/{id}/comments`, `PATCH/DELETE /forum/comments/{id}`,
-  `PUT /forum/posts/{id}/like` (toggle). All require auth.
+  `PUT /forum/posts/{id}/vote`, `PUT /forum/comments/{id}/vote` (body
+  `{value: 1 | -1}`; re-sending the value you hold clears it). All require auth.
+  Votes live in two tables (`post_votes`, `comment_votes`), each keyed
+  `(user_id, target_id)` with `value` in `{-1, 1}`; both name the target column
+  `target_id`, so one set of repo functions — parameterized on a constrained
+  `TypeVar` — serves both. Every post/comment read carries `like_count`,
+  `dislike_count`, and the viewer's `my_vote`, batched two queries per page.
 - **Analysis pipeline** (`services/analysis.py`, `api/analysis.py`): `POST /analyze`
   (normalize → hash → cache lookup → verdict + history append) and `GET
   /analyses/{id}` (per-category breakdown). `analysis_id` in the response *is* the
@@ -125,8 +131,8 @@ does **not exist yet** (see stubbed list below).
   UI compares `author_email` to the stored email — server still enforces via 403).
   Vite dev server proxies `/auth`, `/forum`, `/analyze`, `/analyses`, `/history`,
   `/preferences` to `:8000`; no CORS configured on the backend (deliberate — revisit
-  at deployment). Known gap: `GET /forum/posts/{id}` doesn't say whether the current
-  user liked the post, so the like button has no initial pressed-state.
+  at deployment). Vote state (`like_count`, `dislike_count`, `my_vote`) ships on
+  every post and comment read, so buttons render pressed-state on first paint.
 
 **Stubbed / not implemented:**
 - **Logging** (`core/logging.py::setup_logging`) is a no-op — wired into lifespan
