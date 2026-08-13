@@ -1,10 +1,12 @@
 ## P0 — blockers (security / data integrity)
 
-1. JWT secret defaults to "change-me" with no startup guard.
+1. [DONE] JWT secret defaults to "change-me" with no startup guard.
 config.py:32. If deployed without CLEARTERMS_JWT_SECRET, tokens are trivially forgeable → full auth bypass. Nothing fails startup if left default. Add a model_validator that refuses to boot on the dev secret when not in dev mode.
+   → CLEARTERMS_ENVIRONMENT added; non-dev refuses boot on the dev secret or a <32-byte one. Compose sets prod + requires CLEARTERMS_JWT_SECRET.
 
-2. No rate limiting anywhere.
+2. [DONE] No rate limiting anywhere.
 forum.py:324 check_rate_limit raises NotImplementedError, unwired. /auth/login → unlimited credential brute-force. /analyze → unlimited expensive LLM calls (cost/DoS). Needs real limiter (per-IP + per-user) before public.
+   → Fixed-window limiter (rate_limits table): login per-IP, analyze per-user, 429 + Retry-After. Forum check_rate_limit still stubbed (phase-2).
 
 3. Logging is a no-op.
 core/logging.py = # TODO: implement. Zero observability in prod — no request logs, no error traces, no request IDs. Blind to incidents. Wire structured logging + uvicorn handler integration.
