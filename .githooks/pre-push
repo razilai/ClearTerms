@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pre-push gate: mirror CI's fast checks so lint/type failures are caught
+# before they hit the pipeline. Heavy gates (pytest, frontend build) need
+# Docker + Ollama and stay CI-only.
+#
+# Enabled per-clone via: git config core.hooksPath .githooks
+# Skip once with: git push --no-verify
+
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+fail=0
+
+echo "pre-push: backend ruff"
+( cd "$root/backend" && uv run ruff check . ) || fail=1
+
+echo "pre-push: backend mypy"
+( cd "$root/backend" && uv run mypy . ) || fail=1
+
+echo "pre-push: frontend lint"
+( cd "$root/frontend" && npm run lint ) || fail=1
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-push: checks failed — fix, or bypass with 'git push --no-verify'" >&2
+  exit 1
+fi
+
+echo "pre-push: all checks passed"
