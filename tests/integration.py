@@ -4,7 +4,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repos import forum as forum_repo
-from app.models import PostVote, User
+from app.models import CommentVote, PostVote, User
 from tests.conftest import signup_headers
 
 # Minimal valid PNG (1x1 px, smallest valid file)
@@ -223,22 +223,24 @@ async def test_delete_own_post(client: httpx.AsyncClient, auth_headers: dict) ->
 async def test_delete_post_cascades_children(
     client: httpx.AsyncClient, auth_headers: dict, session: AsyncSession
 ) -> None:
-    # Deleting a post is one DELETE; the comments.post_id / likes.post_id
-    # ondelete=CASCADE drops the children in the db (no app-level sweep).
-    post_id = await _create_post(client, auth_headers)
-    await client.post(
-        f"/forum/posts/{post_id}/comments",
-        json={"body": "a comment"},
-        headers=auth_headers,
+    # Deleting a post is one DELETE; the comments.post_id / post_votes.target_id
+    # ondelete=CASCADE drops the children in the db (no app-level sweep). Comment
+    # votes go two hops: post -> comment -> comment_votes.target_id.
+    post_id, comment_id = await _post_and_comment(client, auth_headers)
+    await client.put(
+        f"/forum/posts/{post_id}/vote", json={"value": 1}, headers=auth_headers
     )
-    await client.put(f"/forum/posts/{post_id}/like", headers=auth_headers)
+    await client.put(
+        f"/forum/comments/{comment_id}/vote", json={"value": 1}, headers=auth_headers
+    )
 
     resp = await client.delete(f"/forum/posts/{post_id}", headers=auth_headers)
     assert resp.status_code == 204
 
     # The shared session sees the cascade even before commit.
     assert await forum_repo.list_comments(session, post_id, limit=50) == []
-    assert await forum_repo.count_likes(session, post_id) == 0
+    assert await forum_repo.count_votes(session, PostVote, [post_id]) == {}
+    assert await forum_repo.count_votes(session, CommentVote, [comment_id]) == {}
 
 
 async def test_delete_other_users_post(
@@ -324,20 +326,63 @@ async def test_delete_other_users_comment(
     assert resp.status_code == 403
 
 
-# --- likes ---
+# --- votes ---
 
-
-async def test_toggle_like(client: httpx.AsyncClient, auth_headers: dict) -> None:
+async def test_vote_post_toggles_and_switches(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
     post_id = await _create_post(client, auth_headers)
-    resp = await client.put(f"/forum/posts/{post_id}/like", headers=auth_headers)
-    assert resp.json() == {"like_count": 1, "liked": True}
-    resp = await client.put(f"/forum/posts/{post_id}/like", headers=auth_headers)
-    assert resp.json() == {"like_count": 0, "liked": False}
+
+    resp = await client.put(
+        f"/forum/posts/{post_id}/vote", json={"value": 1}, headers=auth_headers
+    )
+    assert resp.json() == {"like_count": 1, "dislike_count": 0, "my_vote": 1}
+
+    # Same value again clears the vote.
+    resp = await client.put(
+        f"/forum/posts/{post_id}/vote", json={"value": 1}, headers=auth_headers
+    )
+    assert resp.json() == {"like_count": 0, "dislike_count": 0, "my_vote": 0}
+
+    # A like followed by a dislike switches sides — it does not stack.
+    await client.put(
+        f"/forum/posts/{post_id}/vote", json={"value": 1}, headers=auth_headers
+    )
+    resp = await client.put(
+        f"/forum/posts/{post_id}/vote", json={"value": -1}, headers=auth_headers
+    )
+    assert resp.json() == {"like_count": 0, "dislike_count": 1, "my_vote": -1}
 
 
-async def test_like_missing_post(client: httpx.AsyncClient, auth_headers: dict) -> None:
-    resp = await client.put("/forum/posts/9999/like", headers=auth_headers)
+async def test_vote_comment(client: httpx.AsyncClient, auth_headers: dict) -> None:
+    _, comment_id = await _post_and_comment(client, auth_headers)
+    resp = await client.put(
+        f"/forum/comments/{comment_id}/vote", json={"value": -1}, headers=auth_headers
+    )
+    assert resp.json() == {"like_count": 0, "dislike_count": 1, "my_vote": -1}
+
+
+async def test_vote_missing_target(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    resp = await client.put(
+        "/forum/posts/9999/vote", json={"value": 1}, headers=auth_headers
+    )
     assert resp.status_code == 404
+    resp = await client.put(
+        "/forum/comments/9999/vote", json={"value": 1}, headers=auth_headers
+    )
+    assert resp.status_code == 404
+
+
+async def test_vote_rejects_bad_value(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    post_id = await _create_post(client, auth_headers)
+    resp = await client.put(
+        f"/forum/posts/{post_id}/vote", json={"value": 2}, headers=auth_headers
+    )
+    assert resp.status_code == 422
 
 
 # --- analysis + history + preferences ---

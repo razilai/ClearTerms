@@ -18,15 +18,15 @@ from app.core.config import settings
 from app.db.repos import attachments as attachments_repo
 from app.db.repos import forum as forum_repo
 from app.db.repos import users as users_repo
-from app.models import Comment, Post, User
+from app.models import Comment, CommentVote, Post, PostVote, User
 from app.models.attachment import Attachment
 from app.schemas.forum import (
     AttachmentOut,
     CommentOut,
-    LikeResponse,
     PostCreate,
     PostDetail,
     PostOut,
+    VoteResponse,
 )
 from app.schemas.pagination import Page, slice_page
 from app.services import media as media_service
@@ -189,20 +189,16 @@ async def create_post(session: AsyncSession, user: User, data: PostCreate) -> Po
     return _post_out(post, author_email=user.email, like_count=0, attachments=attachments)
 
 
-async def list_posts(
-    session: AsyncSession,
-    limit: int,
-    cursor: tuple[datetime, int] | None,
-) -> Page[PostOut]:
+async def list_posts(session: AsyncSession, limit: int, cursor: tuple[datetime, int] | None,) -> Page[PostOut]:
     posts = await forum_repo.list_posts(session, limit, cursor)
     posts, next_cursor = slice_page(posts, limit, lambda p: (p.created_at, p.id))
     emails = await users_repo.get_emails(session, {p.user_id for p in posts})
-    counts = await forum_repo.count_likes_by_post(session, [p.id for p in posts])
+    counts = await forum_repo.count_votes(session, PostVote, [p.id for p in posts])
     post_attachments = await attachments_repo.list_for_posts(
         session, [p.id for p in posts]
     )
     items = [
-        _post_out(p, emails[p.user_id], counts.get(p.id, 0), post_attachments.get(p.id, []))
+        _post_out(p, emails[p.user_id], counts.get(p.id, forum_repo.VoteCounts(0, 0)).likes, post_attachments.get(p.id, []))
         for p in posts
     ]
     return Page(items=items, next_cursor=next_cursor)
@@ -214,7 +210,9 @@ _COMMENTS_PREVIEW_LIMIT = 20
 async def get_post_detail(session: AsyncSession, post_id: int) -> PostDetail:
     post = await _require_post(session, post_id)
     page = await list_post_comments(session, post_id, _COMMENTS_PREVIEW_LIMIT, None)
-    like_count = await forum_repo.count_likes(session, post_id)
+    counts = (await forum_repo.count_votes(session, PostVote, [post_id])).get(
+            post_id, forum_repo.VoteCounts(0, 0))
+    like_count = counts.likes
     author_email = (await users_repo.get_emails(session, {post.user_id}))[post.user_id]
     post_attachments = (await attachments_repo.list_for_posts(session, [post_id])).get(
         post_id, []
@@ -304,21 +302,38 @@ async def delete_comment(session: AsyncSession, user_id: int, comment_id: int) -
 
 
 # ---------------------------------------------------------------------------
-# Likes
+# Votes (likes/dislikes)
 # ---------------------------------------------------------------------------
 
 
-async def toggle_like(
-    session: AsyncSession, user_id: int, post_id: int
-) -> LikeResponse:
+async def vote_post(session: AsyncSession, user_id: int, post_id: int, value: int) -> VoteResponse:
     await _require_post(session, post_id)
-    liked = await forum_repo.get_like(session, user_id, post_id) is None
-    if liked:
-        await forum_repo.add_like(session, user_id, post_id)
+    return await _apply_vote(session, PostVote, user_id, post_id, value)
+
+
+async def vote_comment(session: AsyncSession, user_id: int, comment_id: int, value: int) -> VoteResponse:
+    comment = await forum_repo.get_comment(session, comment_id)
+    if comment is None:
+        raise NotFoundError("comment")
+    return await _apply_vote(session, CommentVote, user_id, comment_id, value)
+
+
+async def _apply_vote(session: AsyncSession, model: type[forum_repo.VoteT], user_id: int, target_id: int, value: int,) -> VoteResponse:
+    """Toggle semantics: re-sending the value you already hold clears it,
+    sending the opposite switches sides."""
+    existing = await forum_repo.get_vote(session, model, user_id, target_id)
+    if existing is not None and existing.value == value:
+        await forum_repo.remove_vote(session, model, user_id, target_id)
+        my_vote = 0
     else:
-        await forum_repo.remove_like(session, user_id, post_id)
-    like_count = await forum_repo.count_likes(session, post_id)
-    return LikeResponse(like_count=like_count, liked=liked)
+        await forum_repo.set_vote(session, model, user_id, target_id, value)
+        my_vote = value
+    counts = (await forum_repo.count_votes(session, model, [target_id])).get(
+        target_id, forum_repo.VoteCounts(0, 0)
+    )
+    return VoteResponse(
+        like_count=counts.likes, dislike_count=counts.dislikes, my_vote=my_vote
+    )
 
 
 def check_rate_limit(user_id: int) -> None:

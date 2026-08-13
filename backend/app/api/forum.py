@@ -1,4 +1,4 @@
-"""Forum routes: posts, comments, likes, attachments."""
+"""Forum routes: posts, comments, votes, attachments."""
 
 from typing import Annotated
 
@@ -10,10 +10,11 @@ from app.schemas.forum import (
     CommentCreate,
     CommentOut,
     CommentUpdate,
-    LikeResponse,
     PostCreate,
     PostDetail,
     PostOut,
+    VoteRequest,
+    VoteResponse,
 )
 from app.schemas.pagination import Page
 from app.services import forum as forum_service
@@ -97,8 +98,15 @@ async def delete_comment(
     await forum_service.delete_comment(session, user.id, comment_id)
 
 
-@router.put("/posts/{post_id}/like", response_model=LikeResponse)
-async def toggle_like(
-    post_id: int, session: SessionDep, user: CurrentUserDep
-) -> LikeResponse:
-    return await forum_service.toggle_like(session, user.id, post_id)
+@router.put("/posts/{post_id}/vote", response_model=VoteResponse)
+async def vote_post(
+    post_id: int, body: VoteRequest, session: SessionDep, user: CurrentUserDep
+) -> VoteResponse:
+    return await forum_service.vote_post(session, user.id, post_id, body.value)
+
+
+@router.put("/comments/{comment_id}/vote", response_model=VoteResponse)
+async def vote_comment(
+    comment_id: int, body: VoteRequest, session: SessionDep, user: CurrentUserDep
+) -> VoteResponse:
+    return await forum_service.vote_comment(session, user.id, comment_id, body.value)

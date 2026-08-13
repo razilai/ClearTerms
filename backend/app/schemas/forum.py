@@ -1,6 +1,7 @@
 """Phase 2: forum API contracts."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +49,10 @@ class CommentOut(BaseModel):
     body: str
     created_at: datetime
     edited_at: datetime | None
+    like_count: int = 0
+    dislike_count: int = 0
+    # This requester's own vote: -1, 0 or 1.
+    my_vote: int = 0
     attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
@@ -57,7 +62,9 @@ class PostOut(BaseModel):
     title: str
     body: str
     category: str | None
-    like_count: int
+    like_count: int 
+    dislike_count: int = 0
+    my_vote: int = 0
     created_at: datetime
     attachments: list[AttachmentOut] = Field(default_factory=list)
 
@@ -69,6 +76,11 @@ class PostDetail(PostOut):
     comments_next_cursor: str | None = None
 
 
-class LikeResponse(BaseModel):
+class VoteRequest(BaseModel):
+    value: Literal[-1, 1]
+
+
+class VoteResponse(BaseModel):
     like_count: int
-    liked: bool
+    dislike_count: int
+    my_vote: int
