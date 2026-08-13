@@ -2,13 +2,13 @@
 
 from collections.abc import Iterable
 from datetime import datetime
+from typing import NamedTuple, TypeVar
 
 from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Comment, Post
+from app.models import Comment, CommentVote, Post, PostVote
 from app.schemas.forum import PostCreate
-
 
 # ---------------------------------------------------------------------------
 # Post operations
@@ -50,8 +50,8 @@ async def list_posts(
 
 
 async def delete_post(session: AsyncSession, post_id: int) -> None:
-    # ondelete=CASCADE on comments.post_id / likes.post_id (see app.models.forum)
-    # drops the children at the db level, so one DELETE is enough.
+    # ondelete=CASCADE on comments.post_id / post_votes.target_id (see
+    # app.models.forum) drops the children at the db level, so one DELETE is enough
     await session.execute(delete(Post).where(Post.id == post_id))
     await session.flush()
 
@@ -111,49 +111,80 @@ async def delete_comment(session: AsyncSession, comment_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Like operations
+# Vote operations
 # ---------------------------------------------------------------------------
 
-async def get_like(session: AsyncSession, user_id: int, post_id: int) -> Like | None:
+VoteT = TypeVar("VoteT", PostVote, CommentVote)
+
+
+class VoteCounts(NamedTuple):
+    likes: int
+    dislikes: int
+
+
+async def get_vote(session: AsyncSession, model: type[VoteT], user_id: int, target_id: int) -> VoteT | None:
     result = await session.execute(
-        select(Like).where(Like.user_id == user_id, Like.post_id == post_id)
+        select(model).where(model.user_id == user_id, model.target_id == target_id)
     )
     return result.scalar_one_or_none()
 
 
-async def add_like(session: AsyncSession, user_id: int, post_id: int) -> Like:
-    like = Like(user_id=user_id, post_id=post_id)
-    session.add(like)
-    # The UniqueConstraint(user_id, post_id) surfaces a double-like as an
-    # IntegrityError here rather than at the caller's commit.
+async def set_vote(session: AsyncSession, model: type[VoteT], user_id: int, target_id: int, value: int) -> None:
+    """Insert the vote, or update it in place if this user already voted.
+
+    The UniqueConstraint(user_id, target_id) makes a blind insert an
+    IntegrityError, so an existing row is updated rather than added.
+    """
+    existing = await get_vote(session, model, user_id, target_id)
+    if existing is None:
+        session.add(model(user_id=user_id, target_id=target_id, value=value))
+    else:
+        existing.value = value
     await session.flush()
-    return like
 
 
-async def remove_like(session: AsyncSession, user_id: int, post_id: int) -> None:
+async def remove_vote(
+    session: AsyncSession, model: type[VoteT], user_id: int, target_id: int
+) -> None:
     await session.execute(
-        delete(Like).where(Like.user_id == user_id, Like.post_id == post_id)
+        delete(model).where(model.user_id == user_id, model.target_id == target_id)
     )
     await session.flush()
 
 
-async def count_likes(session: AsyncSession, post_id: int) -> int:
-    result = await session.execute(
-        select(func.count()).select_from(Like).where(Like.post_id == post_id)
-    )
-    return result.scalar_one()
+async def count_votes(session: AsyncSession, model: type[VoteT], target_ids: Iterable[int]) -> dict[int, VoteCounts]:
+    """Map target id -> (likes, dislikes). Targets with no votes are absent
 
-
-async def count_likes_by_post(
-    session: AsyncSession, post_ids: Iterable[int]
-) -> dict[int, int]:
-    """Map post id -> like count; posts with no likes may be absent."""
-    ids = list(post_ids)
+    One grouped query for the whole page — counting per target in a loop would
+    be an N+1 on every post list and every page of comments.
+    """
+    ids = list(target_ids)
     if not ids:
         return {}
     result = await session.execute(
-        select(Like.post_id, func.count())
-        .where(Like.post_id.in_(ids))
-        .group_by(Like.post_id)
+        select(model.target_id, model.value, func.count())
+        .where(model.target_id.in_(ids))
+        .group_by(model.target_id, model.value)
     )
-    return {post_id: count for post_id, count in result.all()}
+    counts: dict[int, VoteCounts] = {}
+    for target_id, value, count in result.all():
+        current = counts.get(target_id, VoteCounts(0, 0))
+        counts[target_id] = (
+            VoteCounts(count, current.dislikes)
+            if value > 0
+            else VoteCounts(current.likes, count)
+        )
+    return counts
+
+
+async def get_my_votes(session: AsyncSession, model: type[VoteT], user_id: int, target_ids: Iterable[int]) -> dict[int, int]:
+    """Map target id -> this user's vote value. Unvoted targets are absent."""
+    ids = list(target_ids)
+    if not ids:
+        return {}
+    result = await session.execute(
+        select(model.target_id, model.value).where(
+            model.user_id == user_id, model.target_id.in_(ids)
+        )
+    )
+    return {target_id: value for target_id, value in result.all()}

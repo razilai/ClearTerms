@@ -4,6 +4,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repos import forum as forum_repo
+from app.models import PostVote, User
 from tests.conftest import signup_headers
 
 # Minimal valid PNG (1x1 px, smallest valid file)
@@ -636,7 +637,6 @@ async def test_upload_file_too_large(
     fake_storage: dict,
     monkeypatch: "pytest.MonkeyPatch",
 ) -> None:
-    import pytest
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "max_image_bytes", 10)
@@ -847,3 +847,32 @@ async def test_analyze_runs_through_a_live_queue(
     body = resp.json()
     assert body["verdict"] in {"up", "down"}
     assert isinstance(body["analysis_id"], int)
+
+
+async def test_vote_repo_counts_and_toggles(session: AsyncSession) -> None:
+    """set_vote is an upsert; count_votes splits likes from dislikes."""
+    from app.schemas.forum import PostCreate
+
+    user = User(email="votes@example.com", password_hash="x")
+    session.add(user)
+    await session.flush()
+    post = await forum_repo.create_post(
+        session, user.id, PostCreate(title="t", body="b")
+    )
+
+    await forum_repo.set_vote(session, PostVote, user.id, post.id, 1)
+    counts = await forum_repo.count_votes(session, PostVote, [post.id])
+    assert counts[post.id] == (1, 0)
+
+    # Same (user, post) again with the opposite value updates in place — the
+    # unique constraint means a second insert would raise instead.
+    await forum_repo.set_vote(session, PostVote, user.id, post.id, -1)
+    counts = await forum_repo.count_votes(session, PostVote, [post.id])
+    assert counts[post.id] == (0, 1)
+
+    mine = await forum_repo.get_my_votes(session, PostVote, user.id, [post.id])
+    assert mine == {post.id: -1}
+
+    await forum_repo.remove_vote(session, PostVote, user.id, post.id)
+    assert await forum_repo.count_votes(session, PostVote, [post.id]) == {}
+    assert await forum_repo.get_my_votes(session, PostVote, user.id, [post.id]) == {}
