@@ -9,6 +9,7 @@ joining user emails — db work the api layer is not allowed to do.
 
 import uuid
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,8 +56,33 @@ def _attachment_out(a: Attachment) -> AttachmentOut:
     )
 
 
+class VoteState(NamedTuple):
+    """Vote summary for one target (post or comment). As seen by user"""
+    likes: int
+    dislikes: int
+    my_vote: int  # -1, 0 or 1
+
+_NO_VOTES = VoteState(likes=0, dislikes=0, my_vote=0)
+
+
+async def _vote_state(session: AsyncSession,model: type[forum_repo.VoteT],
+    user_id: int, target_ids: list[int],) -> dict[int, VoteState]:
+    """Counts plus the viewer's own vote, for a whole page in two queries."""
+    counts = await forum_repo.count_votes(session, model, target_ids)
+    mine = await forum_repo.get_my_votes(session, model, user_id, target_ids)
+    return {
+        target_id: VoteState(
+            counts.get(target_id, forum_repo.VoteCounts(0, 0)).likes,
+            counts.get(target_id, forum_repo.VoteCounts(0, 0)).dislikes,
+            mine.get(target_id, 0),
+        )
+        for target_id in target_ids
+    }
+
+
+
 def _post_out(
-    post: Post, author_email: str, like_count: int, attachments: list[Attachment]
+    post: Post, author_email: str, votes: VoteState, attachments: list[Attachment]
 ) -> PostOut:
     return PostOut(
         id=post.id,
@@ -64,19 +90,29 @@ def _post_out(
         title=post.title,
         body=post.body,
         category=post.category,
-        like_count=like_count,
+        like_count=votes.likes,
+        dislike_count=votes.dislikes,
+        my_vote=votes.my_vote,
         created_at=post.created_at,
         attachments=[_attachment_out(a) for a in attachments],
     )
 
 
-def _comment_out(comment: Comment, author_email: str, attachments: list[Attachment]) -> CommentOut:
+def _comment_out(
+    comment: Comment,
+    author_email: str,
+    votes: VoteState,
+    attachments: list[Attachment],
+) -> CommentOut:
     return CommentOut(
         id=comment.id,
         author_email=author_email,
         body=comment.body,
         created_at=comment.created_at,
         edited_at=comment.edited_at,
+        like_count=votes.likes,
+        dislike_count=votes.dislikes,
+        my_vote=votes.my_vote,
         attachments=[_attachment_out(a) for a in attachments],
     )
 
@@ -186,19 +222,26 @@ async def create_post(session: AsyncSession, user: User, data: PostCreate) -> Po
     attachments = await _claim_attachments_for_post(
         session, data.attachment_ids, user, post.id
     )
-    return _post_out(post, author_email=user.email, like_count=0, attachments=attachments)
+    return _post_out(post, author_email=user.email, votes=_NO_VOTES, attachments=attachments)
 
 
-async def list_posts(session: AsyncSession, limit: int, cursor: tuple[datetime, int] | None,) -> Page[PostOut]:
+async def list_posts(
+    session: AsyncSession,
+    user_id: int,
+    limit: int,
+    cursor: tuple[datetime, int] | None,
+) -> Page[PostOut]:
     posts = await forum_repo.list_posts(session, limit, cursor)
     posts, next_cursor = slice_page(posts, limit, lambda p: (p.created_at, p.id))
     emails = await users_repo.get_emails(session, {p.user_id for p in posts})
-    counts = await forum_repo.count_votes(session, PostVote, [p.id for p in posts])
+    votes = await _vote_state(session, PostVote, user_id, [p.id for p in posts])
     post_attachments = await attachments_repo.list_for_posts(
         session, [p.id for p in posts]
     )
     items = [
-        _post_out(p, emails[p.user_id], counts.get(p.id, forum_repo.VoteCounts(0, 0)).likes, post_attachments.get(p.id, []))
+        _post_out(
+            p, emails[p.user_id], votes.get(p.id, _NO_VOTES), post_attachments.get(p.id, [])
+        )
         for p in posts
     ]
     return Page(items=items, next_cursor=next_cursor)
@@ -207,18 +250,22 @@ async def list_posts(session: AsyncSession, limit: int, cursor: tuple[datetime, 
 _COMMENTS_PREVIEW_LIMIT = 20
 
 
-async def get_post_detail(session: AsyncSession, post_id: int) -> PostDetail:
+async def get_post_detail(
+    session: AsyncSession, user_id: int, post_id: int
+) -> PostDetail:
     post = await _require_post(session, post_id)
-    page = await list_post_comments(session, post_id, _COMMENTS_PREVIEW_LIMIT, None)
-    counts = (await forum_repo.count_votes(session, PostVote, [post_id])).get(
-            post_id, forum_repo.VoteCounts(0, 0))
-    like_count = counts.likes
+    page = await list_post_comments(
+        session, user_id, post_id, _COMMENTS_PREVIEW_LIMIT, None
+    )
+    votes = (await _vote_state(session, PostVote, user_id, [post_id])).get(
+        post_id, _NO_VOTES
+    )
     author_email = (await users_repo.get_emails(session, {post.user_id}))[post.user_id]
     post_attachments = (await attachments_repo.list_for_posts(session, [post_id])).get(
         post_id, []
     )
     return PostDetail(
-        **_post_out(post, author_email, like_count, post_attachments).model_dump(),
+        **_post_out(post, author_email, votes, post_attachments).model_dump(),
         comments=page.items,
         comments_next_cursor=page.next_cursor,
     )
@@ -226,6 +273,7 @@ async def get_post_detail(session: AsyncSession, post_id: int) -> PostDetail:
 
 async def list_post_comments(
     session: AsyncSession,
+    user_id: int,
     post_id: int,
     limit: int,
     cursor: tuple[datetime, int] | None,
@@ -239,11 +287,17 @@ async def list_post_comments(
         comments, limit, lambda c: (c.created_at, c.id)
     )
     emails = await users_repo.get_emails(session, {c.user_id for c in comments})
+    votes = await _vote_state(session, CommentVote, user_id, [c.id for c in comments])
     comment_attachments = await attachments_repo.list_for_comments(
         session, [c.id for c in comments]
     )
     items = [
-        _comment_out(c, emails[c.user_id], comment_attachments.get(c.id, []))
+        _comment_out(
+            c,
+            emails[c.user_id],
+            votes.get(c.id, _NO_VOTES),
+            comment_attachments.get(c.id, []),
+        )
         for c in comments
     ]
     return Page(items=items, next_cursor=next_cursor)
@@ -276,7 +330,7 @@ async def add_comment(
     attachments = await _claim_attachments_for_comment(
         session, attachment_ids or [], user, comment.id
     )
-    return _comment_out(comment, author_email=user.email, attachments=attachments)
+    return _comment_out(comment, author_email=user.email, votes=_NO_VOTES, attachments=attachments)
 
 
 async def edit_comment(
@@ -288,9 +342,11 @@ async def edit_comment(
         session, comment_id, body, edited_at=datetime.now(UTC)
     )
     comment_attachments = (
-        await attachments_repo.list_for_comments(session, [comment_id])
-    ).get(comment_id, [])
-    return _comment_out(updated, author_email=user.email, attachments=comment_attachments)
+        await attachments_repo.list_for_comments(session, [comment_id])).get(comment_id, [])
+
+    votes = (await _vote_state(session, CommentVote, user.id, [comment_id])).get(comment_id, _NO_VOTES)
+
+    return _comment_out(updated, author_email=user.email, votes=votes, attachments=comment_attachments)
 
 
 async def delete_comment(session: AsyncSession, user_id: int, comment_id: int) -> None:

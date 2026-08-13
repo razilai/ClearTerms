@@ -11,7 +11,6 @@ import sqlalchemy as sa
 
 from alembic import op
 
-
 # revision identifiers, used by Alembic.
 revision: str = '3552371b2153'
 down_revision: str | Sequence[str] | None = '2e5220fede24'

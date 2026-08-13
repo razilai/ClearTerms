@@ -51,14 +51,14 @@ async def create_post(
 async def list_posts(
     session: SessionDep, user: CurrentUserDep, page: PageParamsDep
 ) -> Page[PostOut]:
-    return await forum_service.list_posts(session, page.limit, page.cursor)
+    return await forum_service.list_posts(session, user.id, page.limit, page.cursor)
 
 
 @router.get("/posts/{post_id}", response_model=PostDetail)
 async def get_post(
     post_id: int, session: SessionDep, user: CurrentUserDep
 ) -> PostDetail:
-    return await forum_service.get_post_detail(session, post_id)
+    return await forum_service.get_post_detail(session, user.id, post_id)
 
 
 @router.get("/posts/{post_id}/comments", response_model=Page[CommentOut])
@@ -66,7 +66,7 @@ async def list_comments(
     post_id: int, session: SessionDep, user: CurrentUserDep, page: PageParamsDep
 ) -> Page[CommentOut]:
     return await forum_service.list_post_comments(
-        session, post_id, page.limit, page.cursor
+        session, user.id, post_id, page.limit, page.cursor
     )
 
 
