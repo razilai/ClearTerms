@@ -1,13 +1,23 @@
 """Application settings, loaded from environment / .env via pydantic-settings."""
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The dev-only JWT secret the guard below refuses to boot on outside dev.
+_DEV_JWT_SECRET = "change-me"
+_MIN_JWT_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="CLEARTERMS_")
+
+    # Deployment mode. "dev" keeps the convenience defaults (dev JWT secret) usable;
+    # anything else is treated as a real deployment and hardens startup — see the
+    # validator below. Set CLEARTERMS_ENVIRONMENT=prod in production.
+    environment: Literal["dev", "prod"] = "dev"
 
     # Dev default; set CLEARTERMS_DATABASE_URL in production. Must be an async
     # driver URL (asyncpg) — the engine and Alembic env both run async.
@@ -89,6 +99,29 @@ class Settings(BaseSettings):
     allowed_video_mimes: frozenset[str] = frozenset(
         {"video/mp4", "video/webm", "video/quicktime"}
     )
+
+    @model_validator(mode="after")
+    def _guard_prod_secrets(self) -> "Settings":
+        """Refuse to boot a real deployment on the dev JWT secret.
+
+        The dev default is trivially forgeable, so a prod process that starts on
+        it is a silent full-auth-bypass. Gate on environment so dev/tests keep
+        the convenient default while any non-dev deploy must supply a real secret
+        (>=32 bytes) via CLEARTERMS_JWT_SECRET.
+        """
+        if self.environment == "dev":
+            return self
+        secret = self.jwt_secret.get_secret_value()
+        if secret == _DEV_JWT_SECRET:
+            raise ValueError(
+                "CLEARTERMS_JWT_SECRET is still the dev default; set a real secret "
+                f"(>={_MIN_JWT_SECRET_BYTES} bytes) when CLEARTERMS_ENVIRONMENT is not 'dev'."
+            )
+        if len(secret.encode()) < _MIN_JWT_SECRET_BYTES:
+            raise ValueError(
+                f"CLEARTERMS_JWT_SECRET must be >={_MIN_JWT_SECRET_BYTES} bytes."
+            )
+        return self
 
 
 @lru_cache

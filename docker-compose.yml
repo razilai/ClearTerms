@@ -106,6 +106,12 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      # Real deployment: hardens startup (see core/config.py::_guard_prod_secrets),
+      # which forces a real JWT secret below.
+      CLEARTERMS_ENVIRONMENT: prod
+      # Supplied from the host env / repo-root .env, never baked into the image.
+      # >=32 bytes; generate with: openssl rand -hex 32. Compose errors if unset.
+      CLEARTERMS_JWT_SECRET: ${CLEARTERMS_JWT_SECRET:?set CLEARTERMS_JWT_SECRET (>=32 bytes, e.g. openssl rand -hex 32)}
       # Reach the db service by name; container-to-container, so port 5432 not localhost.
       CLEARTERMS_DATABASE_URL: postgresql+asyncpg://clearterms:clearterms@db:5432/clearterms
       # Reach Ollama by service name now that it runs in the compose graph.
