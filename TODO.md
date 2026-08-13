@@ -8,8 +8,9 @@ config.py:32. If deployed without CLEARTERMS_JWT_SECRET, tokens are trivially fo
 forum.py:324 check_rate_limit raises NotImplementedError, unwired. /auth/login → unlimited credential brute-force. /analyze → unlimited expensive LLM calls (cost/DoS). Needs real limiter (per-IP + per-user) before public.
    → Fixed-window limiter (rate_limits table): login per-IP, analyze per-user, 429 + Retry-After. Forum check_rate_limit still stubbed (phase-2).
 
-3. Logging is a no-op.
+3. [DONE] Logging is a no-op.
 core/logging.py = # TODO: implement. Zero observability in prod — no request logs, no error traces, no request IDs. Blind to incidents. Wire structured logging + uvicorn handler integration.
+   → setup_logging installs a single JSON stdout handler on root (level from config), folds uvicorn loggers in, idempotent. Formatter carries extra fields + exception tracebacks. NOT done: request-ID middleware + per-request access logs (deferred — no correlation id yet).
 
 4. No TLS anywhere in the stack.
 nginx serves plain HTTP; JWT + passwords cross the wire in clear. Presigned S3 URLs are http://. Need TLS termination (reverse proxy / LB) + https public endpoints.
