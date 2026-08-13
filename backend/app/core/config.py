@@ -63,6 +63,17 @@ class Settings(BaseSettings):
     # and a second job is unreachable while the queue is busy.
     analysis_queue_alpha: int = 10
 
+    # Rate limiting (fixed-window, backed by the rate_limits table). login is
+    # keyed per client IP (no user yet — throttles credential brute-force);
+    # analyze is keyed per user (throttles expensive LLM calls / cost). A window
+    # is a fixed slice of wall-clock time; up to `limit` requests are allowed per
+    # window per key. sweep_interval is how often expired counter rows are purged.
+    rate_limit_login_max: int = 10
+    rate_limit_login_window_seconds: int = 300
+    rate_limit_analyze_max: int = 20
+    rate_limit_analyze_window_seconds: int = 3600
+    rate_limit_sweep_interval_seconds: int = 600
+
     # Object storage (MinIO in dev via docker-compose; swap endpoint env vars for
     # real S3 in prod — the boto3 client is endpoint-agnostic).
     # s3_endpoint_url: backend→storage (default localhost for bare uvicorn; docker-compose
