@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # validator below. Set CLEARTERMS_ENVIRONMENT=prod in production.
     environment: Literal["dev", "prod"] = "dev"
 
+    # Root log level; logs are emitted as JSON (see core/logging.py).
+    log_level: str = "INFO"
+
     # Dev default; set CLEARTERMS_DATABASE_URL in production. Must be an async
     # driver URL (asyncpg) — the engine and Alembic env both run async.
     database_url: str = (
