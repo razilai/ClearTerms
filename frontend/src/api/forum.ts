@@ -2,11 +2,11 @@ import { request, requestForm, requestJson } from './client'
 import type {
   AttachmentOut,
   CommentOut,
-  LikeResponse,
   Page,
   PostCreate,
   PostDetail,
   PostOut,
+  VoteResponse,
 } from './types'
 
 // One keyset page of posts, newest first. Pass the previous page's next_cursor
@@ -49,8 +49,18 @@ export function deleteComment(commentId: number): Promise<void> {
   return request<void>(`/forum/comments/${commentId}`, { method: 'DELETE' })
 }
 
-export function toggleLike(postId: number): Promise<LikeResponse> {
-  return request<LikeResponse>(`/forum/posts/${postId}/like`, { method: 'PUT' })
+// Sending the value you already hold clears the vote (the server toggles).
+export function votePost(postId: number, value: 1 | -1): Promise<VoteResponse> {
+  return requestJson<VoteResponse>(`/forum/posts/${postId}/vote`, 'PUT', { value })
+}
+
+export function voteComment(
+  commentId: number,
+  value: 1 | -1,
+): Promise<VoteResponse> {
+  return requestJson<VoteResponse>(`/forum/comments/${commentId}/vote`, 'PUT', {
+    value,
+  })
 }
 
 export function uploadAttachment(file: File): Promise<AttachmentOut> {

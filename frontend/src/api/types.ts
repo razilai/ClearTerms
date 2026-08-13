@@ -34,6 +34,10 @@ export interface CommentOut {
   body: string
   created_at: string
   edited_at: string | null
+  like_count: number
+  dislike_count: number
+  // This user's own vote: -1, 0 or 1.
+  my_vote: number
   attachments: AttachmentOut[]
 }
 
@@ -44,6 +48,8 @@ export interface PostOut {
   body: string
   category: string | null
   like_count: number
+  dislike_count: number
+  my_vote: number
   created_at: string
   attachments: AttachmentOut[]
 }
@@ -61,9 +67,10 @@ export interface Page<T> {
   next_cursor: string | null
 }
 
-export interface LikeResponse {
+export interface VoteResponse {
   like_count: number
-  liked: boolean
+  dislike_count: number
+  my_vote: number
 }
 
 export interface AnalyzeRequest {
