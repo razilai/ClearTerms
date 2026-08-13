@@ -51,10 +51,19 @@ docker)
 dev)
     trap 'kill 0' EXIT
 
-    # Backend reads the model from env; export before uvicorn so the running
-    # model matches the pulled one below and the cache version.
-    export CLEARTERMS_AGENT_MODEL="$agent_model"
-    export CLEARTERMS_MODEL_VERSION="$model_version"
+    # The LLM backend is chosen in backend/.env (CLEARTERMS_LLM_PROVIDER). With
+    # "openrouter" the host Ollama is unused and agent_model/model_version come
+    # from backend/.env (an OpenRouter slug), so the 4b/0.5b wiring, the export
+    # override, and the ollama serve/pull below are all skipped.
+    provider="$(sed -n 's/^CLEARTERMS_LLM_PROVIDER=//p' backend/.env 2>/dev/null | tail -1)"
+    provider="${provider:-ollama}"
+
+    if [ "$provider" = ollama ]; then
+        # Backend reads the model from env; export before uvicorn so the running
+        # model matches the pulled one below and the cache version.
+        export CLEARTERMS_AGENT_MODEL="$agent_model"
+        export CLEARTERMS_MODEL_VERSION="$model_version"
+    fi
 
     # Ensure Postgres + MinIO are up (idempotent; skips if already healthy).
     docker compose up -d db minio
@@ -65,16 +74,18 @@ dev)
     # Apply any pending migrations.
     (cd backend && uv run alembic upgrade head)
 
-    # Start Ollama only if it isn't already serving on :11434.
-    if ! curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
-        ollama serve &
-        until curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; do
-            sleep 0.5
-        done
-    fi
+    if [ "$provider" = ollama ]; then
+        # Start Ollama only if it isn't already serving on :11434.
+        if ! curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
+            ollama serve &
+            until curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; do
+                sleep 0.5
+            done
+        fi
 
-    # Pull the chosen model on the host Ollama (no-op if already present).
-    ollama pull "$agent_model"
+        # Pull the chosen model on the host Ollama (no-op if already present).
+        ollama pull "$agent_model"
+    fi
 
     (cd backend && uv run uvicorn app.main:app --reload) &
     (cd frontend && npm run dev) &

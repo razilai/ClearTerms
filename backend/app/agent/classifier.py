@@ -14,6 +14,7 @@ from typing import Any
 from pydantic_ai import Agent, ModelRetry, NativeOutput, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.settings import ModelSettings
 
 from app.agent.categories import (
@@ -135,19 +136,29 @@ def build_agent() -> Agent[str, ChunkFindings]:
     ``deps_type=str`` carries the chunk text so the output validator can check
     quoted evidence against the source.
 
-    ``NativeOutput`` sends the schema in ``response_format`` so Ollama
-    constrains decoding against it, rather than PydanticAI's default tool
+    For Ollama, ``NativeOutput`` sends the schema in ``response_format`` so the
+    decode is constrained against it, rather than PydanticAI's default tool
     calling, which validates after the fact and pays a full forward pass per
-    failure.
+    failure. Hosted models on OpenRouter don't all advertise native
+    (json_schema) structured output — PydanticAI raises ``UserError`` when they
+    don't — so there we fall back to PydanticAI's default tool-call output,
+    which OpenRouter models support. The evidence validator below runs the same
+    on either mode.
     """
-    model = OpenAIChatModel(
-        settings.agent_model,
-        provider=OllamaProvider(base_url=f"{settings.ollama_base_url.rstrip('/')}/v1"),
-    )
+    output_type: NativeOutput[ChunkFindings] | type[ChunkFindings]
+    if settings.llm_provider == "openrouter":
+        provider: OllamaProvider | OpenRouterProvider = OpenRouterProvider(
+            api_key=settings.openrouter_api_key.get_secret_value(),
+        )
+        output_type = ChunkFindings
+    else:
+        provider = OllamaProvider(base_url=f"{settings.ollama_base_url.rstrip('/')}/v1")
+        output_type = NativeOutput(ChunkFindings)
+    model = OpenAIChatModel(settings.agent_model, provider=provider)
     agent = Agent(
         model,
         deps_type=str,
-        output_type=NativeOutput(ChunkFindings),
+        output_type=output_type,
         instructions=render_system_prompt(),
         retries=MAX_EVIDENCE_RETRIES,
         model_settings=ModelSettings(temperature=0.0),

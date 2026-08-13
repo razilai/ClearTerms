@@ -46,7 +46,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
 
+    # LLM backend. "ollama" runs against a local Ollama daemon (ollama_base_url);
+    # "openrouter" calls OpenRouter's OpenAI-compatible API (openrouter_api_key),
+    # letting agent_model name any OpenRouter slug (e.g. inclusionai/ling-3.0-flash).
+    llm_provider: Literal["ollama", "openrouter"] = "ollama"
     ollama_base_url: str = "http://localhost:11434"
+    openrouter_api_key: SecretStr = SecretStr("")
     agent_model: str = "gemma3:4b"
     # Bump on model/prompt changes to invalidate cached analyses. Must track
     # agent_model: overriding the model without bumping this writes scores from
