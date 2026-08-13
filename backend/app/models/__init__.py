@@ -11,7 +11,7 @@ from app.models.attachment import Attachment
 from app.models.base import Base
 from app.models.document import Document
 from app.models.finding import Finding
-from app.models.forum import Comment, Like, Post
+from app.models.forum import Comment, CommentVote, Post, PostVote
 from app.models.history import HistoryEntry
 from app.models.preference import Preference
 from app.models.user import User
@@ -21,11 +21,12 @@ __all__ = [
     "Attachment",
     "Base",
     "Comment",
+    "CommentVote",
     "Document",
     "Finding",
     "HistoryEntry",
-    "Like",
     "Post",
+    "PostVote",
     "Preference",
     "User",
 ]

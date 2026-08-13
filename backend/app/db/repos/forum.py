@@ -6,9 +6,13 @@ from datetime import datetime
 from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Comment, Like, Post
+from app.models import Comment, Post
 from app.schemas.forum import PostCreate
 
+
+# ---------------------------------------------------------------------------
+# Post operations
+# ---------------------------------------------------------------------------
 
 async def create_post(session: AsyncSession, user_id: int, data: PostCreate) -> Post:
     post = Post(
@@ -51,6 +55,11 @@ async def delete_post(session: AsyncSession, post_id: int) -> None:
     await session.execute(delete(Post).where(Post.id == post_id))
     await session.flush()
 
+
+
+# ---------------------------------------------------------------------------
+# Comment operations
+# ---------------------------------------------------------------------------
 
 async def create_comment(
     session: AsyncSession, post_id: int, user_id: int, body: str
@@ -100,6 +109,10 @@ async def delete_comment(session: AsyncSession, comment_id: int) -> None:
     await session.execute(delete(Comment).where(Comment.id == comment_id))
     await session.flush()
 
+
+# ---------------------------------------------------------------------------
+# Like operations
+# ---------------------------------------------------------------------------
 
 async def get_like(session: AsyncSession, user_id: int, post_id: int) -> Like | None:
     result = await session.execute(
