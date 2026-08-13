@@ -1,18 +1,27 @@
 import { ActionIcon, Button, Group, Paper, Text, Textarea } from '@mantine/core'
 import { useState } from 'react'
 
-import type { CommentOut } from '../api/types'
+import type { CommentOut, VoteResponse } from '../api/types'
 import { AttachmentGrid } from './AttachmentGrid'
+import { VoteButtons } from './VoteButtons'
 
 interface Props {
   comment: CommentOut
   isOwn: boolean
   onEdit: (body: string) => Promise<unknown>
   onDelete: () => void
+  onVote: (value: 1 | -1) => Promise<VoteResponse>
   busy: boolean
 }
 
-export function CommentItem({ comment, isOwn, onEdit, onDelete, busy }: Props) {
+export function CommentItem({
+  comment,
+  isOwn,
+  onEdit,
+  onDelete,
+  onVote,
+  busy,
+}: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(comment.body)
 
@@ -87,6 +96,15 @@ export function CommentItem({ comment, isOwn, onEdit, onDelete, busy }: Props) {
             {comment.body}
           </Text>
           <AttachmentGrid attachments={comment.attachments} />
+          <Group mt="xs">
+            <VoteButtons
+              likeCount={comment.like_count}
+              dislikeCount={comment.dislike_count}
+              myVote={comment.my_vote}
+              onVote={onVote}
+              size="compact-xs"
+            />
+          </Group>
         </>
       )}
     </Paper>

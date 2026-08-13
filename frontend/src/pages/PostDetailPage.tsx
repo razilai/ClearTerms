@@ -26,14 +26,16 @@ import {
   editComment,
   getPost,
   listComments,
-  toggleLike,
+  voteComment,
+  votePost,
 } from '../api/forum'
-import type { CommentOut, LikeResponse, PostDetail } from '../api/types'
+import type { CommentOut } from '../api/types'
 import { useAuth } from '../auth/useAuth'
 import { AttachmentGrid } from '../components/AttachmentGrid'
 import { CategoryChip } from '../components/CategoryChip'
 import { CommentItem } from '../components/CommentItem'
 import { MediaDropzone } from '../components/MediaDropzone'
+import { VoteButtons } from '../components/VoteButtons'
 
 const showError = (err: Error) =>
   notifications.show({ color: 'red', message: err.message })
@@ -46,9 +48,6 @@ export function PostDetailPage() {
   const queryClient = useQueryClient()
   const [commentDraft, setCommentDraft] = useState('')
   const commentAttachmentIdsRef = useRef<number[]>([])
-  // Backend reports liked-state only in the toggle response, so it's unknown
-  // until the first click.
-  const [liked, setLiked] = useState<boolean | null>(null)
   const [confirmOpen, { open: openConfirm, close: closeConfirm }] =
     useDisclosure(false)
 
@@ -90,18 +89,6 @@ export function PostDetailPage() {
   const invalidatePost = () => {
     queryClient.invalidateQueries({ queryKey: postKey })
   }
-
-  const likeMutation = useMutation({
-    mutationFn: () => toggleLike(postId),
-    onSuccess: ({ like_count, liked: nowLiked }: LikeResponse) => {
-      setLiked(nowLiked)
-      queryClient.setQueryData<PostDetail>(postKey, (old) =>
-        old ? { ...old, like_count } : old,
-      )
-      queryClient.invalidateQueries({ queryKey: ['posts'] })
-    },
-    onError: showError,
-  })
 
   const addCommentMutation = useMutation({
     mutationFn: ({ body, attachmentIds }: { body: string; attachmentIds: number[] }) =>
@@ -202,14 +189,17 @@ export function PostDetailPage() {
         </Text>
         <AttachmentGrid attachments={post.attachments} />
         <Group mt="lg" justify="space-between">
-          <Button
-            variant={liked ? 'filled' : 'light'}
-            size="xs"
-            loading={likeMutation.isPending}
-            onClick={() => likeMutation.mutate()}
-          >
-            ♥ {post.like_count}
-          </Button>
+          <VoteButtons
+            likeCount={post.like_count}
+            dislikeCount={post.dislike_count}
+            myVote={post.my_vote}
+            onVote={async (value) => {
+              const result = await votePost(postId, value)
+              // The list page shows the same counts — let it refetch.
+              queryClient.invalidateQueries({ queryKey: ['posts'] })
+              return result
+            }}
+          />
           {isOwnPost && (
             <Button color="red" variant="light" size="xs" onClick={openConfirm}>
               Delete post
@@ -235,6 +225,7 @@ export function PostDetailPage() {
               editCommentMutation.mutateAsync({ id: comment.id, body })
             }
             onDelete={() => deleteCommentMutation.mutate(comment.id)}
+            onVote={(value) => voteComment(comment.id, value)}
           />
         ))}
         {commentsCursor && (

@@ -94,7 +94,7 @@ export function PostListPage() {
                   · {new Date(post.created_at).toLocaleString()}
                 </Text>
                 <Text size="xs" c="dimmed">
-                  · ♥ {post.like_count}
+                  · ♥ {post.like_count} · ✕ {post.dislike_count}
                 </Text>
                 {post.attachments.length > 0 && (
                   <Text size="xs" c="dimmed">
