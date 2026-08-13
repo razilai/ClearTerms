@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.api.deps import SessionDep
+from app.api.deps import SessionDep, rate_limit_login
 from app.schemas.auth import SignupRequest, TokenResponse
 from app.services import auth as auth_service
 
@@ -19,7 +19,11 @@ async def signup(body: SignupRequest, session: SessionDep) -> TokenResponse:
     return TokenResponse(access_token=auth_service.create_access_token(user.id))
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit_login)],
+)
 async def login(
     form: Annotated[OAuth2PasswordRequestForm, Depends()], session: SessionDep
 ) -> TokenResponse:
