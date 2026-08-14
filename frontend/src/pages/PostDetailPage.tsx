@@ -32,7 +32,6 @@ import {
 import type { CommentOut } from '../api/types'
 import { useAuth } from '../auth/useAuth'
 import { AttachmentGrid } from '../components/AttachmentGrid'
-import { CategoryChip } from '../components/CategoryChip'
 import { CommentItem } from '../components/CommentItem'
 import { MediaDropzone } from '../components/MediaDropzone'
 import { VoteButtons } from '../components/VoteButtons'
@@ -161,10 +160,7 @@ export function PostDetailPage() {
         ← All posts
       </Button>
       <Paper withBorder p="lg">
-        <Group justify="space-between" wrap="nowrap">
-          <Title order={2}>{post.title}</Title>
-          {post.category && <CategoryChip category={post.category} />}
-        </Group>
+        <Title order={2}>{post.title}</Title>
         <Text
           size="sm"
           c="dimmed"

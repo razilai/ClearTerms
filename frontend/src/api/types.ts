@@ -24,7 +24,6 @@ export interface PostCreate {
   title: string
   body: string
   document_id?: number | null
-  category?: string | null
   attachment_ids?: number[]
 }
 
@@ -46,7 +45,6 @@ export interface PostOut {
   author_email: string
   title: string
   body: string
-  category: string | null
   like_count: number
   dislike_count: number
   my_vote: number

@@ -18,7 +18,6 @@ async def create_post(session: AsyncSession, user_id: int, data: PostCreate) -> 
     post = Post(
         user_id=user_id,
         document_id=data.document_id,
-        category=data.category,
         title=data.title,
         body=data.body,
     )

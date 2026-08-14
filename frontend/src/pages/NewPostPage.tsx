@@ -23,7 +23,7 @@ export function NewPostPage() {
   const attachmentIdsRef = useRef<number[]>([])
 
   const form = useForm({
-    initialValues: { title: '', body: '', category: '' },
+    initialValues: { title: '', body: '' },
     validate: {
       title: (v) => (v.trim().length > 0 ? null : 'Title is required'),
       body: (v) => (v.trim().length > 0 ? null : 'Body is required'),
@@ -52,11 +52,10 @@ export function NewPostPage() {
       </Title>
       <Paper withBorder p="lg">
         <form
-          onSubmit={form.onSubmit(({ title, body, category }) =>
+          onSubmit={form.onSubmit(({ title, body }) =>
             mutation.mutate({
               title: title.trim(),
               body: body.trim(),
-              category: category.trim() || null,
               attachment_ids: attachmentIdsRef.current,
             }),
           )}
@@ -74,13 +73,6 @@ export function NewPostPage() {
             minRows={6}
             mt="md"
             {...form.getInputProps('body')}
-          />
-          <TextInput
-            label="Category"
-            description="Optional, e.g. arbitration, data collection"
-            maxLength={64}
-            mt="md"
-            {...form.getInputProps('category')}
           />
           <Box mt="md">
             <MediaDropzone onChange={handleAttachmentChange} disabled={mutation.isPending} />

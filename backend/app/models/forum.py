@@ -29,7 +29,6 @@ class Post(Base):
     document_id: Mapped[int | None] = mapped_column(
         ForeignKey("documents.id"), index=True
     )
-    category: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(

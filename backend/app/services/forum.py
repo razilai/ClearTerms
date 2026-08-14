@@ -89,7 +89,6 @@ def _post_out(
         author_email=author_email,
         title=post.title,
         body=post.body,
-        category=post.category,
         like_count=votes.likes,
         dislike_count=votes.dislikes,
         my_vote=votes.my_vote,

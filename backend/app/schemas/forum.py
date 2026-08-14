@@ -26,7 +26,6 @@ class PostCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     body: str = Field(min_length=1)
     document_id: int | None = None
-    category: str | None = Field(default=None, max_length=64)
     attachment_ids: list[int] = Field(
         default_factory=list, max_length=settings.max_attachments_per_item
     )
@@ -61,8 +60,7 @@ class PostOut(BaseModel):
     author_email: str
     title: str
     body: str
-    category: str | None
-    like_count: int 
+    like_count: int
     dislike_count: int = 0
     my_vote: int = 0
     created_at: datetime

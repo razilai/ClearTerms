@@ -13,7 +13,6 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { listPosts } from '../api/forum'
-import { CategoryChip } from '../components/CategoryChip'
 import { PageHeader } from '../components/PageHeader'
 
 export function PostListPage() {
@@ -77,12 +76,9 @@ export function PostListPage() {
               to={`/forum/${post.id}`}
               style={{ textDecoration: 'none', color: 'inherit' }}
             >
-              <Group justify="space-between" wrap="nowrap">
-                <Text fw={600} lineClamp={1}>
-                  {post.title}
-                </Text>
-                {post.category && <CategoryChip category={post.category} />}
-              </Group>
+              <Text fw={600} lineClamp={1}>
+                {post.title}
+              </Text>
               <Text size="sm" c="dimmed" lineClamp={2} mt={4}>
                 {post.body}
               </Text>
