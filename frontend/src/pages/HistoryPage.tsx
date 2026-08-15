@@ -9,30 +9,29 @@ import {
   Stack,
   Text,
 } from '@mantine/core'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { isNotReady } from '../api/client'
 import { getHistory } from '../api/history'
 import { BackendNotReady } from '../components/BackendNotReady'
 import { PageHeader } from '../components/PageHeader'
+import { Pager } from '../components/Pager'
 import { VerdictStamp } from '../components/VerdictStamp'
+import { useKeysetPages } from '../lib/useKeysetPages'
+
+const PAGE_SIZE = 15
 
 export function HistoryPage() {
-  const {
-    data,
-    isPending,
-    error,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
-    queryKey: ['history'],
-    queryFn: ({ pageParam }) => getHistory(pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  const pages = useKeysetPages()
+  const { data, isPending, error, isFetching } = useQuery({
+    queryKey: ['history', pages.cursor],
+    queryFn: () => getHistory(PAGE_SIZE, pages.cursor),
+    // Hold the current page on screen while the next loads, so the list
+    // doesn't collapse to a spinner on every click.
+    placeholderData: keepPreviousData,
   })
-  const entries = data?.pages.flatMap((page) => page.items) ?? []
+  const entries = data?.items ?? []
 
   if (isPending) {
     return (
@@ -99,19 +98,13 @@ export function HistoryPage() {
               </Group>
             </Paper>
           ))}
-          {hasNextPage && (
-            <Center mt="sm">
-              <Button
-                variant="subtle"
-                onClick={() => fetchNextPage()}
-                loading={isFetchingNextPage}
-              >
-                Load more
-              </Button>
-            </Center>
-          )}
         </Stack>
       )}
+      <Pager
+        pages={pages}
+        nextCursor={data?.next_cursor ?? null}
+        loading={isFetching}
+      />
     </Container>
   )
 }

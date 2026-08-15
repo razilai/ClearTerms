@@ -158,12 +158,19 @@ does **not exist yet** (see stubbed list below).
   jobs as data rather than callables.
 - **Frontend** (`frontend/`): login/signup, forum, **and analysis** — analyze,
   history, analysis-detail pages against the routes above. Nav sections are
-  §1 Analysis, §2 History, §3 Forum, §4 Messages, §5 Personal area. There is no
+  §1 Analysis, §2 History, §3 Forum, §4 Messages, §5 Personal Area. There is no
   Settings page: the preference checklist lives in `components/PreferencesPanel.tsx`
   and is mounted inside `/me`, with `/settings` redirecting there. `/me`
-  (`PersonalAreaPage`) also shows the vote totals and the user's own posts, five
-  per page — the backend cursor is forward-only, so the page keeps the stack of
-  visited cursors to walk back. `/messages` is layout only (no DM backend).
+  (`PersonalAreaPage`) also shows the vote totals and the user's own posts.
+  Forum and History page 15 at a time, the personal area's own-posts list 5.
+  All three use discrete pages, not infinite scroll: `lib/useKeysetPages.ts`
+  holds the stack of visited cursors (the backend cursor is forward-only, so
+  walking back means replaying one) and `components/Pager.tsx` renders the
+  controls. `goNext` takes the current page's `next_cursor` as an argument
+  rather than closing over it — the caller only learns it from a query the
+  hook's own `cursor` keys, so passing it in at construction would be a cycle.
+  Post *comments* (`PostDetailPage`) still load-more; only the two top-level
+  lists were converted. `/messages` is layout only (no DM backend).
   Session = JWT + email in localStorage (no `/me` endpoint; ownership
   UI compares `author_email` to the stored email — server still enforces via 403).
   Vite dev server proxies `/auth`, `/forum`, `/analyze`, `/analyses`, `/history`,

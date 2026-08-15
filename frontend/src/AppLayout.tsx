@@ -12,7 +12,7 @@ const NAV_ITEMS = [
   { to: '/history', label: 'History', section: '§2' },
   { to: '/forum', label: 'Forum', section: '§3' },
   { to: '/messages', label: 'Messages', section: '§4' },
-  { to: '/me', label: 'Personal area', section: '§5' },
+  { to: '/me', label: 'Personal Area', section: '§5' },
 ]
 
 function isActive(pathname: string, to: string): boolean {

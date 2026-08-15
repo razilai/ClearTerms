@@ -12,8 +12,13 @@ import type {
 
 // One keyset page of posts, newest first. Pass the previous page's next_cursor
 // for the next page; omit for the first.
-export function listPosts(cursor?: string | null): Promise<Page<PostOut>> {
-  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+export function listPosts(
+  limit: number,
+  cursor?: string | null,
+): Promise<Page<PostOut>> {
+  const query = cursor
+    ? `?limit=${limit}&cursor=${encodeURIComponent(cursor)}`
+    : `?limit=${limit}`
   return request<Page<PostOut>>(`/forum/posts${query}`)
 }
 

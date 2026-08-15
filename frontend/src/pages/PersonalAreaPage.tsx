@@ -1,7 +1,6 @@
 import {
   Alert,
   Badge,
-  Button,
   Card,
   Center,
   Container,
@@ -14,14 +13,17 @@ import {
   Title,
 } from '@mantine/core'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { getMyVoteTotals, listMyPosts } from '../api/forum'
 import { useAuth } from '../auth/useAuth'
 import { PageHeader } from '../components/PageHeader'
+import { Pager } from '../components/Pager'
 import { PreferencesPanel } from '../components/PreferencesPanel'
+import { useKeysetPages } from '../lib/useKeysetPages'
 
+// Deliberately smaller than the Forum and History pages: this list is one
+// section among several, not the whole screen.
 const PAGE_SIZE = 5
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
@@ -39,31 +41,19 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
 
 export function PersonalAreaPage() {
   const { email } = useAuth()
-  // The backend pages forward-only (keyset cursors), so going back means
-  // replaying a cursor we already visited: cursors[i] opens page i, and
-  // cursors[0] is null — the first page.
-  const [cursors, setCursors] = useState<(string | null)[]>([null])
-  const [pageIndex, setPageIndex] = useState(0)
-  const cursor = cursors[pageIndex]
+  const pages = useKeysetPages()
 
   const totals = useQuery({
     queryKey: ['my-vote-totals'],
     queryFn: getMyVoteTotals,
   })
   const posts = useQuery({
-    queryKey: ['my-posts', cursor],
-    queryFn: () => listMyPosts(PAGE_SIZE, cursor),
+    queryKey: ['my-posts', pages.cursor],
+    queryFn: () => listMyPosts(PAGE_SIZE, pages.cursor),
     // Keep the current page on screen while the next one loads, so the list
     // doesn't collapse to a spinner on every click.
     placeholderData: keepPreviousData,
   })
-
-  const nextCursor = posts.data?.next_cursor ?? null
-  const goNext = () => {
-    if (!nextCursor) return
-    setCursors((prev) => [...prev.slice(0, pageIndex + 1), nextCursor])
-    setPageIndex((i) => i + 1)
-  }
 
   return (
     <Container size="md">
@@ -130,34 +120,17 @@ export function PersonalAreaPage() {
           ))}
         </Stack>
       )}
-      {(pageIndex > 0 || nextCursor) && (
-        <Group justify="center" gap="lg" mt="md">
-          <Button
-            variant="subtle"
-            disabled={pageIndex === 0}
-            onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
-          >
-            ← Previous
-          </Button>
-          <Text size="sm" c="dimmed">
-            Page {pageIndex + 1}
-          </Text>
-          <Button
-            variant="subtle"
-            disabled={!nextCursor}
-            loading={posts.isFetching}
-            onClick={goNext}
-          >
-            Next →
-          </Button>
-        </Group>
-      )}
+      <Pager
+        pages={pages}
+        nextCursor={posts.data?.next_cursor ?? null}
+        loading={posts.isFetching}
+      />
 
       <Title order={2} size="h4" mt="xl" mb="sm">
         Preferences
       </Title>
       <Text size="sm" c="dimmed" mb="md">
-        How much each clause type counts toward your verdict.
+        Which clause types your reports cover.
       </Text>
       <PreferencesPanel />
     </Container>
