@@ -1,7 +1,10 @@
-import { Box, Group, Stack, Text } from '@mantine/core'
+import { Anchor, Box, Group, Stack, Text } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 
+import { getPreferences } from '../api/preferences'
 import type { AnalysisDetail } from '../api/types'
-import { CATEGORY_ORDER } from '../lib/categories'
+import { CATEGORY_ORDER, enabledCategories } from '../lib/categories'
 import { ScoreMark } from './ScoreMark'
 import { VerdictStamp } from './VerdictStamp'
 
@@ -24,7 +27,23 @@ function orderScores(detail: AnalysisDetail) {
   return [...known, ...extra]
 }
 
+// The backend returns every category it scored — filtering is a read-time,
+// per-user concern, so it happens here. Sharing the ['preferences'] query key
+// with PreferencesPanel means a toggle there re-renders open reports without a
+// refetch.
 export function AnalysisReport({ detail, verdict }: Props) {
+  const preferences = useQuery({
+    queryKey: ['preferences'],
+    queryFn: getPreferences,
+    // A report is still worth reading if preferences fail to load; the
+    // undefined case in enabledCategories() hides nothing.
+    retry: false,
+  })
+  const isEnabled = enabledCategories(preferences.data?.items)
+  const ordered = orderScores(detail)
+  const shown = ordered.filter((entry) => isEnabled(entry.category))
+  const hiddenCount = ordered.length - shown.length
+
   return (
     <Box>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
@@ -41,10 +60,20 @@ export function AnalysisReport({ detail, verdict }: Props) {
         {verdict && <VerdictStamp verdict={verdict} size="sm" />}
       </Group>
       <Box mt="md">
-        {orderScores(detail).map((entry, i) => (
+        {shown.map((entry, i) => (
           <ScoreMark key={entry.category} entry={entry} index={i} />
         ))}
       </Box>
+      {hiddenCount > 0 && (
+        <Text size="xs" c="ink.6" mt="sm">
+          {hiddenCount} clause {hiddenCount === 1 ? 'type is' : 'types are'}{' '}
+          hidden by your{' '}
+          <Anchor component={Link} to="/me" size="xs" inherit>
+            preferences
+          </Anchor>
+          .
+        </Text>
+      )}
     </Box>
   )
 }

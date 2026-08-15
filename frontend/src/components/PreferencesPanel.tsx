@@ -3,10 +3,10 @@ import {
   Box,
   Button,
   Center,
+  Checkbox,
   Group,
   Loader,
   Paper,
-  Slider,
   Stack,
   Text,
 } from '@mantine/core'
@@ -21,47 +21,43 @@ import { BackendNotReady } from './BackendNotReady'
 import {
   CATEGORY_DESCRIPTIONS,
   CATEGORY_ORDER,
-  DEFAULT_WEIGHT,
+  DEFAULT_ENABLED,
   labelFor,
 } from '../lib/categories'
 
-const MARKS = [
-  { value: 0, label: 'Ignore' },
-  { value: 0.5 },
-  { value: 1, label: 'Full weight' },
-]
-
 function withDefaults(items?: PreferenceItem[]) {
-  const merged: Record<string, number> = {}
-  for (const category of CATEGORY_ORDER) merged[category] = DEFAULT_WEIGHT
-  for (const item of items ?? []) merged[item.category] = item.weight
+  const merged: Record<string, boolean> = {}
+  for (const category of CATEGORY_ORDER) merged[category] = DEFAULT_ENABLED
+  for (const item of items ?? []) merged[item.category] = item.enabled
   return merged
 }
 
-// The preference sliders, headerless so the personal area can frame them as one
-// of its sections.
+// The preference checklist, headerless so the personal area can frame them as
+// one of its sections. Unchecking a category hides it from every report and
+// stops it producing a thumbs-down; it never changes what gets analyzed, so
+// re-checking one reveals it in analyses that already exist.
 export function PreferencesPanel() {
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['preferences'],
     queryFn: getPreferences,
   })
-  const [weights, setWeights] = useState<Record<string, number> | null>(null)
+  const [checked, setChecked] = useState<Record<string, boolean> | null>(null)
 
   const baseline = useMemo(() => withDefaults(query.data?.items), [query.data])
 
-  // Seed local slider state once the server answers; user edits win after that.
+  // Seed local checkbox state once the server answers; user edits win after that.
   useEffect(() => {
-    if (query.data && weights === null) {
-      setWeights(withDefaults(query.data.items))
+    if (query.data && checked === null) {
+      setChecked(withDefaults(query.data.items))
     }
-  }, [query.data, weights])
+  }, [query.data, checked])
 
   const mutation = useMutation({
     mutationFn: updatePreferences,
     onSuccess: (res) => {
       queryClient.setQueryData(['preferences'], res)
-      setWeights(withDefaults(res.items))
+      setChecked(withDefaults(res.items))
       notifications.show({ color: 'ok', message: 'Preferences saved' })
     },
     onError: (err) => {
@@ -91,7 +87,7 @@ export function PreferencesPanel() {
     )
   }
 
-  const display = weights ?? withDefaults()
+  const display = checked ?? withDefaults()
   const categories = [
     ...CATEGORY_ORDER,
     ...Object.keys(display).filter(
@@ -99,14 +95,16 @@ export function PreferencesPanel() {
     ),
   ]
   const dirty =
-    weights !== null &&
-    categories.some((c) => (weights[c] ?? 0) !== (baseline[c] ?? 0))
+    checked !== null &&
+    categories.some(
+      (c) => (checked[c] ?? DEFAULT_ENABLED) !== (baseline[c] ?? DEFAULT_ENABLED),
+    )
 
   const save = () => {
     mutation.mutate(
       categories.map((category) => ({
         category,
-        weight: display[category] ?? DEFAULT_WEIGHT,
+        enabled: display[category] ?? DEFAULT_ENABLED,
       })),
     )
   }
@@ -119,29 +117,32 @@ export function PreferencesPanel() {
         </Box>
       )}
       <Paper withBorder p="lg">
-        <Stack gap="xl">
+        <Text size="xs" c="ink.6" mb="lg">
+          Unchecked clause types are left out of your reports and never count
+          against a document. Every clause type is still analyzed, so checking
+          one again brings it back — in past reviews too.
+        </Text>
+        <Stack gap="lg">
           {categories.map((category) => (
-            <Box key={category}>
-              <Text fw={500} size="sm" mb={2}>
-                {labelFor(category)}
-              </Text>
-              <Text size="xs" c="ink.6" mb="xs">
-                {CATEGORY_DESCRIPTIONS[category] ?? ''}
-              </Text>
-              <Slider
-                min={0}
-                max={1}
-                step={0.05}
-                marks={MARKS}
-                label={(v) => v.toFixed(2)}
-                value={display[category] ?? DEFAULT_WEIGHT}
-                disabled={notReady}
-                onChange={(v) =>
-                  setWeights((prev) => ({ ...(prev ?? display), [category]: v }))
-                }
-                mb="md"
-              />
-            </Box>
+            <Checkbox
+              key={category}
+              checked={display[category] ?? DEFAULT_ENABLED}
+              disabled={notReady}
+              onChange={(event) => {
+                const next = event.currentTarget.checked
+                setChecked((prev) => ({ ...(prev ?? display), [category]: next }))
+              }}
+              label={
+                <Box>
+                  <Text fw={500} size="sm">
+                    {labelFor(category)}
+                  </Text>
+                  <Text size="xs" c="ink.6">
+                    {CATEGORY_DESCRIPTIONS[category] ?? ''}
+                  </Text>
+                </Box>
+              }
+            />
           ))}
         </Stack>
         {!notReady && (

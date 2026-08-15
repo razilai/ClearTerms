@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent.categories import SCORE_AGGRESSIVE, SCORE_STANDARD
 from app.core.config import settings
 from app.core.logging import JsonFormatter, setup_logging
 from app.db.repos import documents, history, preferences, users
@@ -23,6 +24,8 @@ from app.db.repos import rate_limit as rate_limit_repo
 from app.models import Analysis, Document, Finding, Preference, RateLimit, User
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
+from app.services import history as history_service
+from app.services import preferences as preferences_service
 from app.services import rate_limit as rate_limit_service
 from app.services.exceptions import (
     InvalidTokenError,
@@ -405,12 +408,12 @@ async def test_deleting_an_analysis_deletes_its_findings(session: AsyncSession) 
 # inventing ids: the tests stay valid if FK enforcement is ever switched on.
 
 
-def _preference(user_id: int, category: str, weight: float = 1.0) -> Preference:
-    return Preference(user_id=user_id, category=category, weight=weight)
+def _preference(user_id: int, category: str, enabled: bool = True) -> Preference:
+    return Preference(user_id=user_id, category=category, enabled=enabled)
 
 
-def _items(*pairs: tuple[str, float]) -> list[PreferenceItem]:
-    return [PreferenceItem(category=c, weight=w) for c, w in pairs]
+def _items(*pairs: tuple[str, bool]) -> list[PreferenceItem]:
+    return [PreferenceItem(category=c, enabled=e) for c, e in pairs]
 
 
 async def test_get_for_user_returns_only_that_users_preferences(
@@ -419,16 +422,16 @@ async def test_get_for_user_returns_only_that_users_preferences(
     alice = await users.create(session, "ada@example.com", "pw1")
     bob = await users.create(session, "bob@example.com", "pw2")
     await preferences.replace_for_user(
-        session, alice.id, _items(("arbitration", 1.0), ("liability", 0.5))
+        session, alice.id, _items(("arbitration", True), ("liability", False))
     )
     await preferences.replace_for_user(
-        session, bob.id, _items(("data_collection", 2.0))
+        session, bob.id, _items(("data_collection", False))
     )
 
     found = await preferences.get_for_user(session, alice.id)
-    assert {(p.category, p.weight) for p in found} == {
-        ("arbitration", 1.0),
-        ("liability", 0.5),
+    assert {(p.category, p.enabled) for p in found} == {
+        ("arbitration", True),
+        ("liability", False),
     }
     assert all(p.user_id == alice.id for p in found)
 
@@ -443,17 +446,17 @@ async def test_replace_for_user_sets_initial_preferences(session: AsyncSession) 
     user = await users.create(session, "ada@example.com", "pw1")
 
     returned = await preferences.replace_for_user(
-        session, user.id, _items(("arbitration", 1.0), ("liability", 0.5))
+        session, user.id, _items(("arbitration", True), ("liability", False))
     )
-    assert {(p.category, p.weight) for p in returned} == {
-        ("arbitration", 1.0),
-        ("liability", 0.5),
+    assert {(p.category, p.enabled) for p in returned} == {
+        ("arbitration", True),
+        ("liability", False),
     }
 
     found = await preferences.get_for_user(session, user.id)
-    assert {(p.category, p.weight) for p in found} == {
-        ("arbitration", 1.0),
-        ("liability", 0.5),
+    assert {(p.category, p.enabled) for p in found} == {
+        ("arbitration", True),
+        ("liability", False),
     }
 
 
@@ -461,35 +464,93 @@ async def test_replace_for_user_wipes_previous_set(session: AsyncSession) -> Non
     user = await users.create(session, "ada@example.com", "pw1")
     other = await users.create(session, "bob@example.com", "pw2")
     await preferences.replace_for_user(
-        session, user.id, _items(("arbitration", 1.0), ("liability", 0.5))
+        session, user.id, _items(("arbitration", True), ("liability", False))
     )
-    await preferences.replace_for_user(session, other.id, _items(("arbitration", 9.0)))
+    await preferences.replace_for_user(session, other.id, _items(("arbitration", False)))
 
     await preferences.replace_for_user(
-        session, user.id, _items(("data_collection", 2.0), ("termination", 1.5))
+        session, user.id, _items(("data_collection", False), ("termination", True))
     )
 
     found = await preferences.get_for_user(session, user.id)
-    assert {(p.category, p.weight) for p in found} == {
-        ("data_collection", 2.0),
-        ("termination", 1.5),
+    assert {(p.category, p.enabled) for p in found} == {
+        ("data_collection", False),
+        ("termination", True),
     }
-    # The replaced categories are gone entirely, not merely re-weighted.
+    # The replaced categories are gone entirely, not merely toggled off.
     assert {p.category for p in found}.isdisjoint({"arbitration", "liability"})
     # The wipe is scoped to one user: bob keeps his own "arbitration" row.
     other_found = await preferences.get_for_user(session, other.id)
-    assert {(p.category, p.weight) for p in other_found} == {("arbitration", 9.0)}
+    assert {(p.category, p.enabled) for p in other_found} == {("arbitration", False)}
 
 
 async def test_duplicate_category_for_user_raises(session: AsyncSession) -> None:
     user = await users.create(session, "ada@example.com", "pw1")
-    await preferences.replace_for_user(session, user.id, _items(("arbitration", 1.0)))
+    await preferences.replace_for_user(session, user.id, _items(("arbitration", True)))
 
     # Added directly rather than through the repo: this pins the DB constraint
     # itself, leaving replace_for_user free to dedupe its own input if it wants.
-    session.add(_preference(user.id, "arbitration", weight=2.0))
+    session.add(_preference(user.id, "arbitration", enabled=False))
     with pytest.raises(IntegrityError):
         await session.flush()
+
+
+# --- compute_verdict --------------------------------------------------------
+#
+# Pure function over cached scores x preferences: no session needed. A category
+# the user has switched off must not be able to produce a thumbs-down, and a
+# category they never configured must still count (fresh accounts get a
+# meaningful verdict).
+
+
+def _score(category: str, score: int) -> Analysis:
+    return Analysis(
+        document_id=0,
+        category=category,
+        score=score,
+        model_version=settings.model_version,
+    )
+
+
+def test_compute_verdict_counts_unconfigured_categories() -> None:
+    verdict = preferences_service.compute_verdict(
+        [_score("arbitration", SCORE_AGGRESSIVE)], []
+    )
+    assert verdict == "down"
+
+
+def test_compute_verdict_ignores_disabled_category() -> None:
+    verdict = preferences_service.compute_verdict(
+        [_score("arbitration", SCORE_AGGRESSIVE)],
+        [_preference(user_id=1, category="arbitration", enabled=False)],
+    )
+    assert verdict == "up"
+
+
+def test_compute_verdict_keeps_enabled_category() -> None:
+    verdict = preferences_service.compute_verdict(
+        [_score("arbitration", SCORE_AGGRESSIVE)],
+        [_preference(user_id=1, category="arbitration", enabled=True)],
+    )
+    assert verdict == "down"
+
+
+def test_compute_verdict_disabling_one_category_leaves_others_counting() -> None:
+    verdict = preferences_service.compute_verdict(
+        [
+            _score("arbitration", SCORE_AGGRESSIVE),
+            _score("liability", SCORE_AGGRESSIVE),
+        ],
+        [_preference(user_id=1, category="arbitration", enabled=False)],
+    )
+    assert verdict == "down"
+
+
+def test_compute_verdict_up_when_nothing_is_aggressive() -> None:
+    verdict = preferences_service.compute_verdict(
+        [_score("arbitration", SCORE_STANDARD)], []
+    )
+    assert verdict == "up"
 
 
 # --- history repo -----------------------------------------------------------
@@ -560,6 +621,91 @@ async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
 
     found = await history.list_for_user(session, user.id, limit=50)
     assert [e.id for e in found] == [newest.id, middle.id, oldest.id]
+
+
+# --- history verdict recomputation ------------------------------------------
+#
+# The stored HistoryEntry.verdict is a snapshot from analyze time. The list
+# recomputes it against the user's *current* preferences so switching a
+# category off retroactively updates old entries, matching what the detail
+# view now hides. The stored value survives as the fallback for documents with
+# no cached scores at the current model_version.
+
+
+async def _analyzed_document(
+    session: AsyncSession,
+    text_hash: str,
+    *,
+    category: str = "arbitration",
+    score: int = SCORE_AGGRESSIVE,
+    model_version: str | None = None,
+) -> Document:
+    document = await documents.create(session, text_hash, None, "normalized text")
+    session.add(
+        Analysis(
+            document_id=document.id,
+            category=category,
+            score=score,
+            model_version=settings.model_version
+            if model_version is None
+            else model_version,
+        )
+    )
+    await session.flush()
+    return document
+
+
+async def test_get_analyses_for_documents_groups_by_document(
+    session: AsyncSession,
+) -> None:
+    first = await _analyzed_document(session, "hash-a")
+    second = await _analyzed_document(session, "hash-b", category="liability")
+
+    found = await documents.get_analyses_for_documents(
+        session, [first.id, second.id], settings.model_version
+    )
+    assert {id_: [a.category for a in rows] for id_, rows in found.items()} == {
+        first.id: ["arbitration"],
+        second.id: ["liability"],
+    }
+
+
+async def test_get_analyses_for_documents_skips_other_model_versions(
+    session: AsyncSession,
+) -> None:
+    document = await _analyzed_document(session, "hash-a", model_version="stale-v0")
+
+    found = await documents.get_analyses_for_documents(
+        session, [document.id], settings.model_version
+    )
+    assert found == {}
+
+
+async def test_list_history_recomputes_verdict_from_current_preferences(
+    session: AsyncSession,
+) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+    document = await _analyzed_document(session, "hash-a")
+    await history.append(session, user.id, document.id, "down")
+    await preferences.replace_for_user(
+        session, user.id, _items(("arbitration", False))
+    )
+
+    page = await history_service.list_history(session, user.id, limit=50, cursor=None)
+    assert [e.verdict for e in page.items] == ["up"]
+
+
+async def test_list_history_falls_back_to_stored_verdict_without_cached_scores(
+    session: AsyncSession,
+) -> None:
+    user = await users.create(session, "ada@example.com", "pw1")
+    # Scores exist only under an older model_version, so there is nothing to
+    # recompute from; the snapshot is the only honest answer.
+    document = await _analyzed_document(session, "hash-a", model_version="stale-v0")
+    await history.append(session, user.id, document.id, "down")
+
+    page = await history_service.list_history(session, user.id, limit=50, cursor=None)
+    assert [e.verdict for e in page.items] == ["down"]
 
 
 # --- analysis queue ----------------------------------------------------------

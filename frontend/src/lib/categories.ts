@@ -1,3 +1,5 @@
+import type { PreferenceItem } from '../api/types'
+
 // Mirrors the ClauseCategory taxonomy in backend/app/schemas/analysis.py, using
 // the display_name/description product voice from
 // backend/app/agent/prompts/categories.toml. Order matches the backend enum
@@ -54,7 +56,20 @@ export function clampScore(score: number): number {
   return Math.max(0, Math.min(SCORE_MAX, score))
 }
 
-// Preference weight: backend schema (backend/app/schemas/preferences.py) is an
-// unconstrained float. UI assumption: 0.0-1.0, step 0.05, default 1.0 — every
-// category counts fully until the user says otherwise.
-export const DEFAULT_WEIGHT = 1
+// Preferences are a binary checklist (backend/app/schemas/preferences.py).
+// A category with no saved row is on, mirroring DEFAULT_ENABLED in
+// backend/app/services/preferences.py — everything counts until the user says
+// otherwise.
+export const DEFAULT_ENABLED = true
+
+// The categories a report should show, given the user's saved preferences.
+// Unchecked categories are hidden from the breakdown and, on the backend, are
+// skipped by compute_verdict. Preferences that have not loaded yet (undefined)
+// hide nothing, so a report never flickers rows out from under the reader.
+export function enabledCategories(
+  items: PreferenceItem[] | undefined,
+): (category: string) => boolean {
+  if (items === undefined) return () => true
+  const saved = new Map(items.map((item) => [item.category, item.enabled]))
+  return (category) => saved.get(category) ?? DEFAULT_ENABLED
+}

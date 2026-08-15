@@ -773,7 +773,7 @@ async def test_preferences_round_trip(
         "items": []
     }
 
-    items = [{"category": "arbitration", "weight": 0.0}]
+    items = [{"category": "arbitration", "enabled": False}]
     put = await client.put(
         "/preferences", json={"items": items}, headers=auth_headers
     )
@@ -788,8 +788,8 @@ async def test_preferences_duplicate_category_rejected(
     client: httpx.AsyncClient, auth_headers: dict
 ) -> None:
     items = [
-        {"category": "arbitration", "weight": 0.5},
-        {"category": "arbitration", "weight": 1.0},
+        {"category": "arbitration", "enabled": False},
+        {"category": "arbitration", "enabled": True},
     ]
     resp = await client.put(
         "/preferences", json={"items": items}, headers=auth_headers

@@ -125,7 +125,7 @@ export interface HistoryEntryOut {
 
 export interface PreferenceItem {
   category: string
-  weight: number
+  enabled: boolean
 }
 
 export interface PreferencesResponse {

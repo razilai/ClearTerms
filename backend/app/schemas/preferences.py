@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 class PreferenceItem(BaseModel):
     category: str
-    weight: float
+    enabled: bool
 
 
 class PreferencesUpdate(BaseModel):

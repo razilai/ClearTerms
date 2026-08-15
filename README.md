@@ -24,7 +24,7 @@ Analysis is **preference-independent**:
 
 1. Each TOS is scored against a fixed set of clause categories (e.g. data selling, arbitration clauses, unilateral changes, content licensing, auto-renewal, ...).
 2. The result is cached, keyed by a hash of the normalized text — one analysis serves all users and all future visits.
-3. A user's verdict (thumbs up/down) is computed at read time: cached category scores × the user's preference weights. Changing preferences never re-triggers analysis.
+3. A user's verdict (thumbs up/down) is computed at read time: cached category scores, restricted to the clause types the user has checked. Changing preferences never re-triggers analysis — every category is scored regardless, so checking one back on reveals it in analyses that already exist.
 
 ## Core Flows
 
@@ -62,7 +62,7 @@ Analysis is **preference-independent**:
 ## Data Model (sketch)
 
 - **User**: id, email, password hash, created_at
-- **Preference**: user_id, category, weight/threshold
+- **Preference**: user_id, category, enabled
 - **Document**: id, text_hash (unique), url, normalized_text, created_at
 - **Analysis**: document_id, category, score, explanation snippet, model version
 - **HistoryEntry**: user_id, document_id, verdict, timestamp
