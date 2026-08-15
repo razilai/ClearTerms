@@ -14,6 +14,7 @@ from app.models.finding import Finding
 from app.models.forum import Comment, CommentVote, Post, PostVote
 from app.models.history import HistoryEntry
 from app.models.preference import Preference
+from app.models.rate_limit import RateLimit
 from app.models.user import User
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     "Post",
     "PostVote",
     "Preference",
+    "RateLimit",
     "User",
 ]

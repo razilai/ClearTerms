@@ -14,6 +14,7 @@ from app.services.exceptions import (
     QueueFullError,
     QueueShutdownError,
     QueueTimeoutError,
+    RateLimitError,
     TooManyAttachmentsError,
     UnsupportedMediaTypeError,
 )
@@ -69,6 +70,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                     content={
                         "detail": "Analysis is taking longer than expected, try again shortly"
                     },
+                )
+            case RateLimitError(retry_after=retry_after):
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests, slow down"},
+                    headers={"Retry-After": str(retry_after)},
                 )
             case _:
                 raise exc

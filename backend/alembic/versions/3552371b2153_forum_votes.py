@@ -1,7 +1,7 @@
 """forum votes
 
 Revision ID: 3552371b2153
-Revises: 2e5220fede24
+Revises: a3190b9b6c64
 Create Date: 2026-08-13 12:07:41.183144
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '3552371b2153'
-down_revision: str | Sequence[str] | None = '2e5220fede24'
+down_revision: str | Sequence[str] | None = 'a3190b9b6c64'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

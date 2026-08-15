@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentUserDep, SessionDep
+from app.api.deps import CurrentUserDep, SessionDep, rate_limit_analyze
 from app.core.config import settings
 from app.schemas.analysis import (
     AnalysisDetail,
@@ -15,7 +15,11 @@ from app.services import analysis as analysis_service
 router = APIRouter(tags=["analysis"])
 
 
-@router.post("/analyze", response_model=VerdictResponse)
+@router.post(
+    "/analyze",
+    response_model=VerdictResponse,
+    dependencies=[Depends(rate_limit_analyze)],
+)
 async def analyze(
     body: AnalyzeRequest, session: SessionDep, user: CurrentUserDep
 ) -> VerdictResponse:

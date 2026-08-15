@@ -65,6 +65,18 @@ class TooManyAttachmentsError(DomainError):
         self.detail = detail
 
 
+class RateLimitError(DomainError):
+    """Caller exceeded a request-rate limit for an endpoint.
+
+    Carries ``retry_after`` (seconds until the current fixed window ends) so the
+    api layer can set a ``Retry-After`` header on the 429.
+    """
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"rate limit exceeded, retry after {retry_after}s")
+        self.retry_after = retry_after
+
+
 class QueueFullError(DomainError):
     """Analysis queue is at capacity; the caller should retry later."""
 

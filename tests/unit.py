@@ -4,7 +4,10 @@ No app, no fakes.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import json
+import logging
+import sys
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -14,15 +17,19 @@ from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.core.logging import JsonFormatter, setup_logging
 from app.db.repos import documents, history, preferences, users
-from app.models import Analysis, Document, Finding, Preference, User
+from app.db.repos import rate_limit as rate_limit_repo
+from app.models import Analysis, Document, Finding, Preference, RateLimit, User
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
+from app.services import rate_limit as rate_limit_service
 from app.services.exceptions import (
     InvalidTokenError,
     QueueFullError,
     QueueShutdownError,
     QueueTimeoutError,
+    RateLimitError,
 )
 from app.services.queue import AnalysisQueue
 
@@ -1249,3 +1256,202 @@ async def test_concurrent_jobs_for_the_same_text_share_one_document(
             select(Document).where(Document.text_hash == "race-hash")
         )
         assert len(rows.scalars().all()) == 1
+
+
+# --- rate limiting ---
+#
+# Enforced on `file_session_factory` (a throwaway database with genuinely
+# independent connections), not the shared-connection `session`/`client` harness:
+# the whole point of the limiter is that each request's count commits on its own
+# connection, independent of the request's own transaction, and a shared
+# connection would hide exactly that.
+
+
+class _FrozenClock:
+    """Stand-in for the rate_limit module's `datetime`, with a movable now().
+
+    enforce reads both `datetime.now(UTC)` and `datetime.fromtimestamp(...)`, so
+    both are provided; `now` is frozen at `self.current` (advanceable) to control
+    which fixed window a call lands in.
+    """
+
+    def __init__(self, current: float) -> None:
+        self.current = current
+
+    def now(self, tz: object = None) -> datetime:
+        return datetime.fromtimestamp(self.current, tz=tz)  # type: ignore[arg-type]
+
+    def fromtimestamp(self, ts: float, tz: object = None) -> datetime:
+        return datetime.fromtimestamp(ts, tz=tz)  # type: ignore[arg-type]
+
+
+async def test_rate_limit_allows_up_to_limit_then_blocks(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # limit=3: three calls pass, the fourth (count 4 > 3) trips.
+    for _ in range(3):
+        await rate_limit_service.enforce(
+            "login", "1.2.3.4", limit=3, window_seconds=60,
+            session_factory=file_session_factory,
+        )
+    with pytest.raises(RateLimitError) as exc:
+        await rate_limit_service.enforce(
+            "login", "1.2.3.4", limit=3, window_seconds=60,
+            session_factory=file_session_factory,
+        )
+    # retry_after points at the window end: positive, no larger than the window.
+    assert 0 < exc.value.retry_after <= 60
+
+
+async def test_rate_limit_keys_are_independent(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # One identifier exhausts its budget; a different identifier is unaffected,
+    # and a different scope for the same identifier is a separate bucket too.
+    for _ in range(2):
+        await rate_limit_service.enforce(
+            "login", "a", limit=2, window_seconds=60,
+            session_factory=file_session_factory,
+        )
+    with pytest.raises(RateLimitError):
+        await rate_limit_service.enforce(
+            "login", "a", limit=2, window_seconds=60,
+            session_factory=file_session_factory,
+        )
+    # Different identifier — fresh counter, does not raise.
+    await rate_limit_service.enforce(
+        "login", "b", limit=2, window_seconds=60,
+        session_factory=file_session_factory,
+    )
+    # Same identifier, different scope — also a fresh counter.
+    await rate_limit_service.enforce(
+        "analyze", "a", limit=2, window_seconds=60,
+        session_factory=file_session_factory,
+    )
+
+
+async def test_rate_limit_window_resets(
+    file_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FrozenClock(10_000.0)
+    monkeypatch.setattr(rate_limit_service, "datetime", clock)
+
+    # Exhaust the window.
+    await rate_limit_service.enforce(
+        "login", "ip", limit=1, window_seconds=100,
+        session_factory=file_session_factory,
+    )
+    with pytest.raises(RateLimitError):
+        await rate_limit_service.enforce(
+            "login", "ip", limit=1, window_seconds=100,
+            session_factory=file_session_factory,
+        )
+
+    # Advance past the window boundary → a new bucket, budget restored.
+    clock.current += 100
+    await rate_limit_service.enforce(
+        "login", "ip", limit=1, window_seconds=100,
+        session_factory=file_session_factory,
+    )
+
+
+async def test_sweep_expired_removes_only_past_windows(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    now = datetime.now(UTC)
+    async with file_session_factory() as s:
+        await rate_limit_repo.increment(s, "old:1:1", now - timedelta(seconds=1))
+        await rate_limit_repo.increment(s, "live:1:1", now + timedelta(hours=1))
+        await s.commit()
+
+    removed = await rate_limit_service.sweep_expired(session_factory=file_session_factory)
+    assert removed == 1
+
+    async with file_session_factory() as s:
+        rows = await s.execute(select(RateLimit.bucket))
+        assert rows.scalars().all() == ["live:1:1"]
+
+
+# --- logging ---
+
+
+def _record(msg: str, *args: object, level: int = logging.INFO) -> logging.LogRecord:
+    return logging.LogRecord(
+        name="test.logger",
+        level=level,
+        pathname=__file__,
+        lineno=1,
+        msg=msg,
+        args=args,
+        exc_info=None,
+    )
+
+
+def test_json_formatter_emits_valid_json_with_core_fields() -> None:
+    out = json.loads(JsonFormatter().format(_record("hello %s", "world")))
+    assert out["message"] == "hello world"
+    assert out["level"] == "INFO"
+    assert out["logger"] == "test.logger"
+    assert "timestamp" in out
+
+
+def test_json_formatter_merges_extra_fields() -> None:
+    record = _record("with context")
+    record.user_id = 7  # what logging does for logger.info(..., extra={"user_id": 7})
+    out = json.loads(JsonFormatter().format(record))
+    assert out["user_id"] == 7
+
+
+def test_json_formatter_includes_exception_traceback() -> None:
+    record = _record("boom", level=logging.ERROR)
+    try:
+        raise ValueError("kaboom")
+    except ValueError:
+        record.exc_info = sys.exc_info()
+    out = json.loads(JsonFormatter().format(record))
+    assert "ValueError: kaboom" in out["exception"]
+
+
+@pytest.fixture
+def _restore_root_logging() -> Iterator[None]:
+    """Snapshot and restore global logging state around a setup_logging() test."""
+    names = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    root = logging.getLogger()
+    saved_root = (root.handlers[:], root.level)
+    saved = {
+        n: (logging.getLogger(n).handlers[:], logging.getLogger(n).propagate)
+        for n in names
+    }
+    try:
+        yield
+    finally:
+        root.handlers[:] = saved_root[0]
+        root.setLevel(saved_root[1])
+        for n, (handlers, propagate) in saved.items():
+            lg = logging.getLogger(n)
+            lg.handlers[:] = handlers
+            lg.propagate = propagate
+
+
+@pytest.mark.usefixtures("_restore_root_logging")
+def test_setup_logging_installs_single_json_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "log_level", "WARNING")
+    setup_logging()
+    setup_logging()  # idempotent: a second call must not stack handlers.
+
+    root = logging.getLogger()
+    assert len(root.handlers) == 1
+    assert isinstance(root.handlers[0].formatter, JsonFormatter)
+    assert root.level == logging.WARNING
+
+
+@pytest.mark.usefixtures("_restore_root_logging")
+def test_setup_logging_folds_uvicorn_loggers_into_root() -> None:
+    setup_logging()
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        assert lg.handlers == []
+        assert lg.propagate is True

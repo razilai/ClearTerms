@@ -220,6 +220,19 @@ uv run --project backend python tests/devserver.py    # from repo root
 - Testing strategy is **hybrid**: test-first for backend logic (analysis
   pipeline, preference matching, API contracts); build-first for UI/extension.
 
+## Pre-push hook
+
+`.githooks/pre-push` mirrors CI's fast gates (backend ruff + mypy, frontend
+lint) so a lint/type failure can't reach the pipeline. It is **not** active
+until each clone opts in — `core.hooksPath` is local config, not versioned:
+
+```bash
+git config core.hooksPath .githooks    # one-time, per clone
+```
+
+Heavy gates (pytest, frontend build) need Docker + Ollama and stay CI-only.
+Bypass once with `git push --no-verify`.
+
 ## Stack
 
 FastAPI · SQLAlchemy 2.0 async + asyncpg · Alembic · Pydantic v2 · PyJWT ·
