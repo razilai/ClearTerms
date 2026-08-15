@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Center,
-  Container,
   Group,
   Loader,
   Paper,
@@ -18,8 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { isNotReady } from '../api/client'
 import { getPreferences, updatePreferences } from '../api/preferences'
 import type { PreferenceItem } from '../api/types'
-import { BackendNotReady } from '../components/BackendNotReady'
-import { PageHeader } from '../components/PageHeader'
+import { BackendNotReady } from './BackendNotReady'
 import {
   CATEGORY_DESCRIPTIONS,
   CATEGORY_ORDER,
@@ -40,7 +38,9 @@ function withDefaults(items?: PreferenceItem[]) {
   return merged
 }
 
-export function SettingsPage() {
+// The preference sliders, headerless so the personal area can frame them as one
+// of its sections.
+export function PreferencesPanel() {
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['preferences'],
@@ -76,7 +76,7 @@ export function SettingsPage() {
 
   if (query.isPending) {
     return (
-      <Center mt="xl">
+      <Center my="xl">
         <Loader />
       </Center>
     )
@@ -85,11 +85,9 @@ export function SettingsPage() {
   const notReady = isNotReady(query.error)
   if (query.error && !notReady) {
     return (
-      <Container size="sm">
-        <Alert color="red" mt="md">
-          Failed to load preferences: {query.error.message}
-        </Alert>
-      </Container>
+      <Alert color="red" mt="md">
+        Failed to load preferences: {query.error.message}
+      </Alert>
     )
   }
 
@@ -114,12 +112,7 @@ export function SettingsPage() {
   }
 
   return (
-    <Container size="sm">
-      <PageHeader
-        eyebrow="§4 · Preferences"
-        title="Preferences"
-        description="How much each clause type counts toward your verdict."
-      />
+    <>
       {notReady && (
         <Box mb="md">
           <BackendNotReady feature="Preferences" compact />
@@ -153,16 +146,12 @@ export function SettingsPage() {
         </Stack>
         {!notReady && (
           <Group justify="flex-end" mt="lg">
-            <Button
-              disabled={!dirty}
-              loading={mutation.isPending}
-              onClick={save}
-            >
+            <Button disabled={!dirty} loading={mutation.isPending} onClick={save}>
               Save preferences
             </Button>
           </Group>
         )}
       </Paper>
-    </Container>
+    </>
   )
 }

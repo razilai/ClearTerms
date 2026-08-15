@@ -31,8 +31,9 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
   src/
     api/        types.ts (schema mirrors), client.ts (fetch wrapper), auth.ts, forum.ts
     auth/       context.ts, AuthContext.tsx (provider), useAuth.ts, RequireAuth.tsx, storage.ts
-    pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage
-    components/ CommentItem
+    pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage,
+                MessagesPage (layout stub), PersonalAreaPage
+    components/ CommentItem, PreferencesPanel
 tests/          test tiers: unit.py, integration.py, system.py
                 + devserver.py (uvicorn on a throwaway Postgres container for frontend dev)
 docker-compose.yml, backend/Dockerfile
@@ -68,7 +69,10 @@ does **not exist yet** (see stubbed list below).
 - **Forum** (phase 2, `services/forum.py`, `api/forum.py`): posts, comments,
   votes. Owner-only delete/edit checks live in the service. Services return API
   schemas (not ORM rows) because `author_email` needs a user-email join. Routes:
-  `POST/GET /forum/posts`, `GET/DELETE /forum/posts/{id}`,
+  `POST/GET /forum/posts`, `GET /forum/posts/mine` (own posts, same keyset page
+  — declared *before* `/posts/{id}` or "mine" parses as an int id),
+  `GET /forum/me/vote-totals` (post count + likes/dislikes across every post you
+  wrote, for the personal-area header), `GET/DELETE /forum/posts/{id}`,
   `POST /forum/posts/{id}/comments`, `PATCH/DELETE /forum/comments/{id}`,
   `PUT /forum/posts/{id}/vote`, `PUT /forum/comments/{id}/vote` (body
   `{value: 1 | -1}`; re-sending the value you hold clears it). All require auth.
@@ -137,8 +141,14 @@ does **not exist yet** (see stubbed list below).
   process; fixing that needs an out-of-process broker, which means expressing
   jobs as data rather than callables.
 - **Frontend** (`frontend/`): login/signup, forum, **and analysis** — analyze,
-  history, analysis-detail, and settings (preference weights) pages against the
-  routes above. Session = JWT + email in localStorage (no `/me` endpoint; ownership
+  history, analysis-detail pages against the routes above. Nav sections are
+  §1 Analysis, §2 History, §3 Forum, §4 Messages, §5 Personal area. There is no
+  Settings page: the preference sliders live in `components/PreferencesPanel.tsx`
+  and are mounted inside `/me`, with `/settings` redirecting there. `/me`
+  (`PersonalAreaPage`) also shows the vote totals and the user's own posts, five
+  per page — the backend cursor is forward-only, so the page keeps the stack of
+  visited cursors to walk back. `/messages` is layout only (no DM backend).
+  Session = JWT + email in localStorage (no `/me` endpoint; ownership
   UI compares `author_email` to the stored email — server still enforces via 403).
   Vite dev server proxies `/auth`, `/forum`, `/analyze`, `/analyses`, `/history`,
   `/preferences` to `:8000`; no CORS configured on the backend (deliberate — revisit
@@ -146,6 +156,8 @@ does **not exist yet** (see stubbed list below).
   every post and comment read, so buttons render pressed-state on first paint.
 
 **Stubbed / not implemented:**
+- **Messages (DM)**: `pages/MessagesPage.tsx` is a two-pane layout placeholder.
+  No model, no routes, no service — the section exists so the shape is settled.
 - **Logging** (`core/logging.py::setup_logging`) is a no-op — wired into lifespan
   but not configured yet.
 - `services/forum.py::check_rate_limit` raises `NotImplementedError` (phase-2

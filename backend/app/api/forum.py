@@ -10,6 +10,7 @@ from app.schemas.forum import (
     CommentCreate,
     CommentOut,
     CommentUpdate,
+    MyVoteTotals,
     PostCreate,
     PostDetail,
     PostOut,
@@ -52,6 +53,22 @@ async def list_posts(
     session: SessionDep, user: CurrentUserDep, page: PageParamsDep
 ) -> Page[PostOut]:
     return await forum_service.list_posts(session, user.id, page.limit, page.cursor)
+
+
+# Must stay above /posts/{post_id}: FastAPI matches in declaration order, and
+# "mine" would otherwise be parsed as an int post_id and 422.
+@router.get("/posts/mine", response_model=Page[PostOut])
+async def list_my_posts(
+    session: SessionDep, user: CurrentUserDep, page: PageParamsDep
+) -> Page[PostOut]:
+    return await forum_service.list_posts(
+        session, user.id, page.limit, page.cursor, author_id=user.id
+    )
+
+
+@router.get("/me/vote-totals", response_model=MyVoteTotals)
+async def my_vote_totals(session: SessionDep, user: CurrentUserDep) -> MyVoteTotals:
+    return await forum_service.my_vote_totals(session, user.id)
 
 
 @router.get("/posts/{post_id}", response_model=PostDetail)

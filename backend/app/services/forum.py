@@ -24,6 +24,7 @@ from app.models.attachment import Attachment
 from app.schemas.forum import (
     AttachmentOut,
     CommentOut,
+    MyVoteTotals,
     PostCreate,
     PostDetail,
     PostOut,
@@ -255,8 +256,10 @@ async def list_posts(
     user_id: int,
     limit: int,
     cursor: tuple[datetime, int] | None,
+    author_id: int | None = None,
 ) -> Page[PostOut]:
-    posts = await forum_repo.list_posts(session, limit, cursor)
+    """One page of the forum, or of ``author_id``'s own posts when given."""
+    posts = await forum_repo.list_posts(session, limit, cursor, author_id=author_id)
     posts, next_cursor = slice_page(posts, limit, lambda p: (p.created_at, p.id))
     emails = await users_repo.get_emails(session, {p.user_id for p in posts})
     votes = await _vote_state(session, PostVote, user_id, [p.id for p in posts])
@@ -274,6 +277,15 @@ async def list_posts(
         for p in posts
     ]
     return Page(items=items, next_cursor=next_cursor)
+
+
+async def my_vote_totals(session: AsyncSession, user_id: int) -> MyVoteTotals:
+    totals = await forum_repo.author_totals(session, user_id)
+    return MyVoteTotals(
+        post_count=totals.post_count,
+        like_count=totals.likes,
+        dislike_count=totals.dislikes,
+    )
 
 
 _COMMENTS_PREVIEW_LIMIT = 20

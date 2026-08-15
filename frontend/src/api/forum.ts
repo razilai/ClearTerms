@@ -2,6 +2,7 @@ import { request, requestForm, requestJson } from './client'
 import type {
   AttachmentOut,
   CommentOut,
+  MyVoteTotals,
   Page,
   PostCreate,
   PostDetail,
@@ -14,6 +15,21 @@ import type {
 export function listPosts(cursor?: string | null): Promise<Page<PostOut>> {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
   return request<Page<PostOut>>(`/forum/posts${query}`)
+}
+
+// The personal area's own posts, a fixed page at a time.
+export function listMyPosts(
+  limit: number,
+  cursor?: string | null,
+): Promise<Page<PostOut>> {
+  const query = cursor
+    ? `?limit=${limit}&cursor=${encodeURIComponent(cursor)}`
+    : `?limit=${limit}`
+  return request<Page<PostOut>>(`/forum/posts/mine${query}`)
+}
+
+export function getMyVoteTotals(): Promise<MyVoteTotals> {
+  return request<MyVoteTotals>('/forum/me/vote-totals')
 }
 
 export function getPost(postId: number): Promise<PostDetail> {

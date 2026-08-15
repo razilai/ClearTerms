@@ -37,16 +37,52 @@ async def list_posts(
     session: AsyncSession,
     limit: int,
     cursor: tuple[datetime, int] | None = None,
+    author_id: int | None = None,
 ) -> list[Post]:
     """One keyset page of posts, newest first. Fetches ``limit + 1`` so the
     caller can detect a further page. Uses the ``ix_posts_created_id`` index.
+
+    ``author_id`` narrows the page to one author's posts (the personal area);
+    None is the whole forum.
     """
     stmt = select(Post)
+    if author_id is not None:
+        stmt = stmt.where(Post.user_id == author_id)
     if cursor is not None:
         stmt = stmt.where(tuple_(Post.created_at, Post.id) < cursor)
     stmt = stmt.order_by(Post.created_at.desc(), Post.id.desc()).limit(limit + 1)
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+class AuthorTotals(NamedTuple):
+    post_count: int
+    likes: int
+    dislikes: int
+
+
+async def author_totals(session: AsyncSession, user_id: int) -> AuthorTotals:
+    """How many posts this user wrote and how they were voted on, in aggregate.
+
+    Two grouped queries rather than a page-and-sum: the personal-area header must
+    cover every post the user ever wrote, not just the page on screen.
+    """
+    posts = await session.execute(
+        select(func.count()).select_from(Post).where(Post.user_id == user_id)
+    )
+    votes = await session.execute(
+        select(PostVote.value, func.count())
+        .join(Post, Post.id == PostVote.target_id)
+        .where(Post.user_id == user_id)
+        .group_by(PostVote.value)
+    )
+    likes = dislikes = 0
+    for value, count in votes.all():
+        if value > 0:
+            likes = count
+        else:
+            dislikes = count
+    return AuthorTotals(posts.scalar_one(), likes, dislikes)
 
 
 async def delete_post(session: AsyncSession, post_id: int) -> None:

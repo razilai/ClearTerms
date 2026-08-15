@@ -71,6 +71,13 @@ export interface Page<T> {
   next_cursor: string | null
 }
 
+// Totals across every post you ever wrote — not just the page on screen.
+export interface MyVoteTotals {
+  post_count: number
+  like_count: number
+  dislike_count: number
+}
+
 export interface VoteResponse {
   like_count: number
   dislike_count: number

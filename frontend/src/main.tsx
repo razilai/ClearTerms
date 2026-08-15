@@ -23,10 +23,11 @@ import { AnalysisDetailPage } from './pages/AnalysisDetailPage'
 import { AnalyzePage } from './pages/AnalyzePage'
 import { HistoryPage } from './pages/HistoryPage'
 import { LoginPage } from './pages/LoginPage'
+import { MessagesPage } from './pages/MessagesPage'
 import { NewPostPage } from './pages/NewPostPage'
+import { PersonalAreaPage } from './pages/PersonalAreaPage'
 import { PostDetailPage } from './pages/PostDetailPage'
 import { PostListPage } from './pages/PostListPage'
-import { SettingsPage } from './pages/SettingsPage'
 import { SignupPage } from './pages/SignupPage'
 import { theme } from './theme/theme'
 
@@ -55,7 +56,13 @@ createRoot(document.getElementById('root')!).render(
                   <Route path="/forum" element={<PostListPage />} />
                   <Route path="/forum/new" element={<NewPostPage />} />
                   <Route path="/forum/:postId" element={<PostDetailPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/messages" element={<MessagesPage />} />
+                  <Route path="/me" element={<PersonalAreaPage />} />
+                  {/* Preferences moved into the personal area; keep old links alive. */}
+                  <Route
+                    path="/settings"
+                    element={<Navigate to="/me" replace />}
+                  />
                 </Route>
               </Route>
               <Route path="*" element={<Navigate to="/analyze" replace />} />
