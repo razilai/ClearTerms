@@ -22,7 +22,7 @@ async def replace_for_user(
     await session.execute(delete(Preference).where(Preference.user_id == user_id))
 
     rows = [
-        Preference(user_id=user_id, category=item.category, weight=item.weight)
+        Preference(user_id=user_id, category=item.category, enabled=item.enabled)
         for item in items
     ]
     session.add_all(rows)

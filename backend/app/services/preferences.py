@@ -1,8 +1,10 @@
 """User preferences: CRUD, and verdict computation.
 
-Verdict is computed at read time from cached category scores x the user's
-preference weights (see README "Analyze once, filter per user"). Changing
-preferences never re-triggers analysis.
+Preferences are a binary checklist: each clause category is either on or off.
+Verdict is computed at read time by ignoring the cached scores of categories
+the user switched off (see README "Analyze once, filter per user"). The agent
+always scores every category regardless, so switching one back on reveals it in
+analyses that already exist — nothing is re-run, nothing was skipped.
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,10 +15,10 @@ from app.models import Analysis, Preference
 from app.schemas.preferences import PreferenceItem
 from app.services.exceptions import InvalidInputError
 
-# Weight given to a category the user has not configured. Non-zero so a fresh
-# account with no preferences still gets a meaningful verdict (any aggressive
-# clause counts); a user mutes a category by saving it with weight 0.
-DEFAULT_WEIGHT = 1.0
+# Applied to a category the user has not configured. On, so a fresh account
+# with no preference rows still gets a meaningful verdict (any aggressive clause
+# counts); a user mutes a category by saving it unchecked.
+DEFAULT_ENABLED = True
 
 
 async def get_preferences(session: AsyncSession, user_id: int) -> list[Preference]:
@@ -35,15 +37,17 @@ async def update_preferences(
 
 
 def compute_verdict(scores: list[Analysis], prefs: list[Preference]) -> str:
-    """Pure function: cached category scores x preference weights -> "up" / "down".
+    """Pure function: cached category scores x the user's checklist -> "up" / "down".
 
-    Placeholder policy: thumbs-down if any category the user still weights
-    (missing preferences default to DEFAULT_WEIGHT) scored aggressive. Weight 0
-    mutes a category. Room to grow into a weighted threshold later.
+    Thumbs-down if any category the user still has switched on (categories with
+    no preference row default to DEFAULT_ENABLED) scored aggressive. An
+    unchecked category is invisible here for the same reason it is hidden from
+    the report: the user has said it does not concern them.
     """
-    weights = {pref.category: pref.weight for pref in prefs}
+    enabled = {pref.category: pref.enabled for pref in prefs}
     for score in scores:
-        weight = weights.get(score.category, DEFAULT_WEIGHT)
-        if score.score >= SCORE_AGGRESSIVE and weight > 0:
+        if score.score >= SCORE_AGGRESSIVE and enabled.get(
+            score.category, DEFAULT_ENABLED
+        ):
             return "down"
     return "up"

@@ -10,7 +10,8 @@ Web app + Chrome extension that flags complex terms-of-service clauses and
 explains them. Thin extension, smart backend. Core design: **analyze once,
 filter per user** — each TOS is scored against a fixed set of clause categories,
 cached by a hash of the normalized text, and each user's thumbs-up/down verdict
-is computed at read time from cached scores × their preference weights. Changing
+is computed at read time from cached scores filtered by their preference
+checklist. Changing
 preferences never re-triggers analysis.
 
 ## Repo layout
@@ -31,8 +32,9 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
   src/
     api/        types.ts (schema mirrors), client.ts (fetch wrapper), auth.ts, forum.ts
     auth/       context.ts, AuthContext.tsx (provider), useAuth.ts, RequireAuth.tsx, storage.ts
-    pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage
-    components/ CommentItem
+    pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage,
+                MessagesPage (layout stub), PersonalAreaPage
+    components/ CommentItem, PreferencesPanel
 tests/          test tiers: unit.py, integration.py, system.py
                 + devserver.py (uvicorn on a throwaway Postgres container for frontend dev)
 docker-compose.yml, backend/Dockerfile
@@ -68,7 +70,10 @@ does **not exist yet** (see stubbed list below).
 - **Forum** (phase 2, `services/forum.py`, `api/forum.py`): posts, comments,
   votes. Owner-only delete/edit checks live in the service. Services return API
   schemas (not ORM rows) because `author_email` needs a user-email join. Routes:
-  `POST/GET /forum/posts`, `GET/DELETE /forum/posts/{id}`,
+  `POST/GET /forum/posts`, `GET /forum/posts/mine` (own posts, same keyset page
+  — declared *before* `/posts/{id}` or "mine" parses as an int id),
+  `GET /forum/me/vote-totals` (post count + likes/dislikes across every post you
+  wrote, for the personal-area header), `GET/DELETE /forum/posts/{id}`,
   `POST /forum/posts/{id}/comments`, `PATCH/DELETE /forum/comments/{id}`,
   `PUT /forum/posts/{id}/vote`, `PUT /forum/comments/{id}/vote` (body
   `{value: 1 | -1}`; re-sending the value you hold clears it). All require auth.
@@ -95,11 +100,26 @@ does **not exist yet** (see stubbed list below).
   and persists one `Analysis` row (plus its `Finding`s) per category.
 - **History** (`services/history.py`, `api/history.py`): `GET /history` — every doc
   the user has had reviewed, newest first, with the document url joined in (service
-  returns the API schema, like forum).
+  returns the API schema, like forum). Each entry's verdict is **recomputed** from
+  the cached scores against current preferences, not read off
+  `history_entries.verdict` — that column is an analyze-time snapshot, and a
+  checklist the user can change afterwards would leave it disagreeing with the
+  detail view. The snapshot survives as the fallback for documents with no cached
+  scores at the current `model_version` (an empty score list would otherwise
+  fabricate a thumbs-up). Costs two batched queries per page
+  (`documents_repo.get_analyses_for_documents` + the user's prefs).
 - **Preferences** (`services/preferences.py`, `api/preferences.py`): `GET/PUT
-  /preferences` (full replace) plus `compute_verdict(scores, prefs)` — placeholder
-  policy: thumbs-down if any category the user weights > 0 scored aggressive;
-  unconfigured categories default to weight 1.0.
+  /preferences` (full replace) plus `compute_verdict(scores, prefs)`. Preferences
+  are a **binary checklist** — `preferences.enabled` is a bool, one row per
+  category the user has saved; anything absent defaults to `DEFAULT_ENABLED =
+  True` so a fresh account still gets a meaningful verdict. Policy: thumbs-down if
+  any *enabled* category scored aggressive. The agent scores every category
+  regardless of preferences, so unchecking one only hides it — re-checking it
+  reveals it in analyses that already exist, retroactively. Unchecked categories
+  are dropped from the report in the **frontend** (`AnalysisReport` reads the
+  shared `['preferences']` query and filters; `GET /analyses/{id}` still returns
+  everything, staying a pure per-document cache view). The report footers the
+  hidden count so a suppressed aggressive clause never vanishes silently.
 - **Shared deps** (`api/deps.py`): `SessionDep`, `CurrentUserDep`.
 - **Config** (`core/config.py`): pydantic-settings, `CLEARTERMS_` env prefix.
 - **Analysis queue** (`services/queue.py`): a bounded `asyncio.PriorityQueue`
@@ -137,8 +157,21 @@ does **not exist yet** (see stubbed list below).
   process; fixing that needs an out-of-process broker, which means expressing
   jobs as data rather than callables.
 - **Frontend** (`frontend/`): login/signup, forum, **and analysis** — analyze,
-  history, analysis-detail, and settings (preference weights) pages against the
-  routes above. Session = JWT + email in localStorage (no `/me` endpoint; ownership
+  history, analysis-detail pages against the routes above. Nav sections are
+  §1 Analysis, §2 History, §3 Forum, §4 Messages, §5 Personal Area. There is no
+  Settings page: the preference checklist lives in `components/PreferencesPanel.tsx`
+  and is mounted inside `/me`, with `/settings` redirecting there. `/me`
+  (`PersonalAreaPage`) also shows the vote totals and the user's own posts.
+  Forum and History page 15 at a time, the personal area's own-posts list 5.
+  All three use discrete pages, not infinite scroll: `lib/useKeysetPages.ts`
+  holds the stack of visited cursors (the backend cursor is forward-only, so
+  walking back means replaying one) and `components/Pager.tsx` renders the
+  controls. `goNext` takes the current page's `next_cursor` as an argument
+  rather than closing over it — the caller only learns it from a query the
+  hook's own `cursor` keys, so passing it in at construction would be a cycle.
+  Post *comments* (`PostDetailPage`) still load-more; only the two top-level
+  lists were converted. `/messages` is layout only (no DM backend).
+  Session = JWT + email in localStorage (no `/me` endpoint; ownership
   UI compares `author_email` to the stored email — server still enforces via 403).
   Vite dev server proxies `/auth`, `/forum`, `/analyze`, `/analyses`, `/history`,
   `/preferences` to `:8000`; no CORS configured on the backend (deliberate — revisit
@@ -146,6 +179,8 @@ does **not exist yet** (see stubbed list below).
   every post and comment read, so buttons render pressed-state on first paint.
 
 **Stubbed / not implemented:**
+- **Messages (DM)**: `pages/MessagesPage.tsx` is a two-pane layout placeholder.
+  No model, no routes, no service — the section exists so the shape is settled.
 - **Logging** (`core/logging.py::setup_logging`) is a no-op — wired into lifespan
   but not configured yet.
 - `services/forum.py::check_rate_limit` raises `NotImplementedError` (phase-2

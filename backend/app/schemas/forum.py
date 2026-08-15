@@ -81,6 +81,14 @@ class PostDetail(PostOut):
     comments_next_cursor: str | None = None
 
 
+class MyVoteTotals(BaseModel):
+    """Personal-area header: every post this user wrote, and its vote tally."""
+
+    post_count: int
+    like_count: int
+    dislike_count: int
+
+
 class VoteRequest(BaseModel):
     value: Literal[-1, 1]
 

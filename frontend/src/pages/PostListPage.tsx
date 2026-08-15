@@ -10,27 +10,26 @@ import {
   Stack,
   Text,
 } from '@mantine/core'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { listPosts } from '../api/forum'
 import { PageHeader } from '../components/PageHeader'
+import { Pager } from '../components/Pager'
+import { useKeysetPages } from '../lib/useKeysetPages'
+
+const PAGE_SIZE = 15
 
 export function PostListPage() {
-  const {
-    data,
-    isPending,
-    error,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
-    queryKey: ['posts'],
-    queryFn: ({ pageParam }) => listPosts(pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  const pages = useKeysetPages()
+  const { data, isPending, error, isFetching } = useQuery({
+    queryKey: ['posts', pages.cursor],
+    queryFn: () => listPosts(PAGE_SIZE, pages.cursor),
+    // Hold the current page on screen while the next loads, so the list
+    // doesn't collapse to a spinner on every click.
+    placeholderData: keepPreviousData,
   })
-  const posts = data?.pages.flatMap((page) => page.items) ?? []
+  const posts = data?.items ?? []
 
   if (isPending) {
     return (
@@ -108,19 +107,13 @@ export function PostListPage() {
               </Group>
             </Card>
           ))}
-          {hasNextPage && (
-            <Center mt="sm">
-              <Button
-                variant="subtle"
-                onClick={() => fetchNextPage()}
-                loading={isFetchingNextPage}
-              >
-                Load more
-              </Button>
-            </Center>
-          )}
         </Stack>
       )}
+      <Pager
+        pages={pages}
+        nextCursor={data?.next_cursor ?? null}
+        loading={isFetching}
+      />
     </Container>
   )
 }

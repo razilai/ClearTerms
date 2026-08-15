@@ -15,7 +15,7 @@ router = APIRouter(prefix="/preferences", tags=["preferences"])
 
 def _response(prefs: list[Preference]) -> PreferencesResponse:
     return PreferencesResponse(
-        items=[PreferenceItem(category=p.category, weight=p.weight) for p in prefs]
+        items=[PreferenceItem(category=p.category, enabled=p.enabled) for p in prefs]
     )
 
 

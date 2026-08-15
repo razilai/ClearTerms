@@ -87,6 +87,34 @@ async def get_analyses(
     return list(result.scalars().all())
 
 
+async def get_analyses_for_documents(
+    session: AsyncSession, document_ids: Iterable[int], model_version: str
+) -> dict[int, list[Analysis]]:
+    """``get_analyses`` for a whole page of documents in one query.
+
+    For the history list, which recomputes each entry's verdict against the
+    user's current preferences. Documents with no rows at this model_version
+    are simply absent from the mapping — the caller distinguishes "nothing
+    cached" from "cached and clean", which are different verdicts.
+
+    Scores only; ``Analysis.findings`` is ``lazy="raise"``, same as
+    ``get_analyses``.
+    """
+    ids = set(document_ids)
+    if not ids:
+        return {}
+    result = await session.execute(
+        select(Analysis).where(
+            Analysis.document_id.in_(ids),
+            Analysis.model_version == model_version,
+        )
+    )
+    by_document: dict[int, list[Analysis]] = {}
+    for analysis in result.scalars().all():
+        by_document.setdefault(analysis.document_id, []).append(analysis)
+    return by_document
+
+
 async def save_analyses(
     session: AsyncSession, analyses: list[Analysis]
 ) -> list[Analysis]:

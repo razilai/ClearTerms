@@ -45,8 +45,9 @@ Stub files already mark the seams:
 
 - `auth.py` — signup, login, JWT issue/verify, password hashing.
 - `preferences.py` — preference CRUD + **verdict computation** at read time
-  (cached category scores × user weights). Changing preferences never
-  re-triggers analysis.
+  (cached category scores, with the categories the user unchecked ignored).
+  Changing preferences never re-triggers analysis — every category is always
+  scored, so re-checking one reveals it in existing analyses.
 - `analysis.py` — the analysis pipeline (preference-independent): normalize →
   hash → cache lookup; on miss clean, chunk, call `app.agent`, take per-category
   max across chunks, persist to cache keyed by `text_hash + model_version`.
