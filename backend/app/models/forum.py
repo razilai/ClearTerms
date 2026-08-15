@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -31,6 +33,10 @@ class Post(Base):
     )
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
+    # Display-only: user_id is still recorded, so ownership checks, deletes and
+    # moderation are unaffected. The service withholds author_email from
+    # everyone except the author.
+    is_anonymous: Mapped[bool] = mapped_column(Boolean, server_default=false())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

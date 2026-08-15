@@ -77,6 +77,17 @@ does **not exist yet** (see stubbed list below).
   `target_id`, so one set of repo functions — parameterized on a constrained
   `TypeVar` — serves both. Every post/comment read carries `like_count`,
   `dislike_count`, and the viewer's `my_vote`, batched two queries per page.
+  Posts (not comments) can be created with `is_anonymous: true`. Anonymity is
+  display-only — `posts.user_id` is still recorded, so ownership, deletes and
+  moderation are unchanged; `_post_out` is the single choke point that returns
+  `author_email: null` to everyone except the author, who keeps seeing their own
+  email so the owner-only UI (which compares it to the localStorage email) still
+  works. `PostOut.is_anonymous` rides along so the author's own post can render
+  an "Anonymous" badge. Anonymity is **inherited by the post author's own
+  comments** on that post (`_comment_out`) — otherwise replying by name under
+  your own anonymous post deanonymises it. Nothing is stored on `comments`: the
+  mask is derived per read from `post.is_anonymous and comment.user_id ==
+  post.user_id`, which is why `edit_comment` loads the owning post.
 - **Analysis pipeline** (`services/analysis.py`, `api/analysis.py`): `POST /analyze`
   (normalize → hash → cache lookup → verdict + history append) and `GET
   /analyses/{id}` (per-category breakdown). `analysis_id` in the response *is* the

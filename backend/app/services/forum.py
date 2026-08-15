@@ -82,11 +82,22 @@ async def _vote_state(session: AsyncSession,model: type[forum_repo.VoteT],
 
 
 def _post_out(
-    post: Post, author_email: str, votes: VoteState, attachments: list[Attachment]
+    post: Post,
+    author_email: str,
+    votes: VoteState,
+    attachments: list[Attachment],
+    viewer_id: int,
 ) -> PostOut:
+    # Single choke point for anonymity: an anonymous post withholds the author's
+    # email from everyone but the author, who still needs it for the owner-only
+    # UI (the server enforces ownership from post.user_id regardless).
+    visible_email = (
+        author_email if not post.is_anonymous or post.user_id == viewer_id else None
+    )
     return PostOut(
         id=post.id,
-        author_email=author_email,
+        author_email=visible_email,
+        is_anonymous=post.is_anonymous,
         title=post.title,
         body=post.body,
         like_count=votes.likes,
@@ -102,10 +113,19 @@ def _comment_out(
     author_email: str,
     votes: VoteState,
     attachments: list[Attachment],
+    post: Post,
+    viewer_id: int,
 ) -> CommentOut:
+    # A comment is anonymous only by inheritance: the author of an anonymous post
+    # replying under it. Without this, replying by name deanonymises the post.
+    is_anonymous = post.is_anonymous and comment.user_id == post.user_id
+    visible_email = (
+        None if is_anonymous and comment.user_id != viewer_id else author_email
+    )
     return CommentOut(
         id=comment.id,
-        author_email=author_email,
+        is_anonymous=is_anonymous,
+        author_email=visible_email,
         body=comment.body,
         created_at=comment.created_at,
         edited_at=comment.edited_at,
@@ -221,7 +241,13 @@ async def create_post(session: AsyncSession, user: User, data: PostCreate) -> Po
     attachments = await _claim_attachments_for_post(
         session, data.attachment_ids, user, post.id
     )
-    return _post_out(post, author_email=user.email, votes=_NO_VOTES, attachments=attachments)
+    return _post_out(
+        post,
+        author_email=user.email,
+        votes=_NO_VOTES,
+        attachments=attachments,
+        viewer_id=user.id,
+    )
 
 
 async def list_posts(
@@ -239,7 +265,11 @@ async def list_posts(
     )
     items = [
         _post_out(
-            p, emails[p.user_id], votes.get(p.id, _NO_VOTES), post_attachments.get(p.id, [])
+            p,
+            emails[p.user_id],
+            votes.get(p.id, _NO_VOTES),
+            post_attachments.get(p.id, []),
+            viewer_id=user_id,
         )
         for p in posts
     ]
@@ -264,7 +294,9 @@ async def get_post_detail(
         post_id, []
     )
     return PostDetail(
-        **_post_out(post, author_email, votes, post_attachments).model_dump(),
+        **_post_out(
+            post, author_email, votes, post_attachments, viewer_id=user_id
+        ).model_dump(),
         comments=page.items,
         comments_next_cursor=page.next_cursor,
     )
@@ -280,7 +312,7 @@ async def list_post_comments(
     """One keyset page of a post's comments (oldest first). Raises if the post
     is gone so a stale link 404s rather than returning an empty page.
     """
-    await _require_post(session, post_id)
+    post = await _require_post(session, post_id)
     comments = await forum_repo.list_comments(session, post_id, limit, cursor)
     comments, next_cursor = slice_page(
         comments, limit, lambda c: (c.created_at, c.id)
@@ -296,6 +328,8 @@ async def list_post_comments(
             emails[c.user_id],
             votes.get(c.id, _NO_VOTES),
             comment_attachments.get(c.id, []),
+            post=post,
+            viewer_id=user_id,
         )
         for c in comments
     ]
@@ -324,19 +358,28 @@ async def add_comment(
 ) -> CommentOut:
     if attachment_ids and len(attachment_ids) > settings.max_attachments_per_item:
         raise TooManyAttachmentsError()
-    await _require_post(session, post_id)
+    post = await _require_post(session, post_id)
     comment = await forum_repo.create_comment(session, post_id, user.id, body)
     attachments = await _claim_attachments_for_comment(
         session, attachment_ids or [], user, comment.id
     )
-    return _comment_out(comment, author_email=user.email, votes=_NO_VOTES, attachments=attachments)
+    return _comment_out(
+        comment,
+        author_email=user.email,
+        votes=_NO_VOTES,
+        attachments=attachments,
+        post=post,
+        viewer_id=user.id,
+    )
 
 
 async def edit_comment(
     session: AsyncSession, user: User, comment_id: int, body: str
 ) -> CommentOut:
     """Owner-only; sets edited_at. Attachments are not changed on edit."""
-    await _require_owned_comment(session, user.id, comment_id)
+    existing = await _require_owned_comment(session, user.id, comment_id)
+    # The owning post carries the anonymity flag the response has to echo back.
+    post = await _require_post(session, existing.post_id)
     updated = await forum_repo.update_comment(
         session, comment_id, body, edited_at=datetime.now(UTC)
     )
@@ -345,7 +388,14 @@ async def edit_comment(
 
     votes = (await _vote_state(session, CommentVote, user.id, [comment_id])).get(comment_id, _NO_VOTES)
 
-    return _comment_out(updated, author_email=user.email, votes=votes, attachments=comment_attachments)
+    return _comment_out(
+        updated,
+        author_email=user.email,
+        votes=votes,
+        attachments=comment_attachments,
+        post=post,
+        viewer_id=user.id,
+    )
 
 
 async def delete_comment(session: AsyncSession, user_id: int, comment_id: int) -> None:

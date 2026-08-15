@@ -26,6 +26,7 @@ class PostCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     body: str = Field(min_length=1)
     document_id: int | None = None
+    is_anonymous: bool = False
     attachment_ids: list[int] = Field(
         default_factory=list, max_length=settings.max_attachments_per_item
     )
@@ -44,7 +45,11 @@ class CommentUpdate(BaseModel):
 
 class CommentOut(BaseModel):
     id: int
-    author_email: str
+    # Set when this comment belongs to the author of an anonymous post: their
+    # replies inherit the post's anonymity, so author_email is None for every
+    # viewer except them. Comments by anyone else are never anonymous.
+    is_anonymous: bool = False
+    author_email: str | None
     body: str
     created_at: datetime
     edited_at: datetime | None
@@ -57,7 +62,9 @@ class CommentOut(BaseModel):
 
 class PostOut(BaseModel):
     id: int
-    author_email: str
+    # None on an anonymous post for every viewer except its author.
+    author_email: str | None
+    is_anonymous: bool = False
     title: str
     body: str
     like_count: int

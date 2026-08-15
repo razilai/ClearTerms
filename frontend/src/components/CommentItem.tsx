@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Group, Paper, Text, Textarea } from '@mantine/core'
+import { ActionIcon, Badge, Button, Group, Paper, Text, Textarea } from '@mantine/core'
 import { useState } from 'react'
 
 import type { CommentOut, VoteResponse } from '../api/types'
@@ -39,8 +39,15 @@ export function CommentItem({
       <Group justify="space-between" gap="xs">
         <Group gap="xs">
           <Text size="sm" fw={600}>
-            {comment.author_email}
+            {comment.author_email ?? 'Anonymous (author)'}
           </Text>
+          {/* Others already read "Anonymous (author)" above; the badge is what
+              tells the author their own reply is anonymous. */}
+          {comment.is_anonymous && comment.author_email && (
+            <Badge size="xs" variant="light" color="gray">
+              Anonymous (author)
+            </Badge>
+          )}
           <Text size="xs" c="dimmed">
             {new Date(comment.created_at).toLocaleString()}
             {comment.edited_at && ' (edited)'}

@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Center,
@@ -84,8 +85,15 @@ export function PostListPage() {
               </Text>
               <Group gap="xs" mt="sm">
                 <Text size="xs" c="dimmed">
-                  {post.author_email}
+                  {post.author_email ?? 'Anonymous'}
                 </Text>
+                {/* The byline already reads "Anonymous" for everyone else; the
+                    badge is what tells the author their own post is anonymous. */}
+                {post.is_anonymous && post.author_email && (
+                  <Badge size="xs" variant="light" color="gray">
+                    Anonymous
+                  </Badge>
+                )}
                 <Text size="xs" c="dimmed">
                   · {new Date(post.created_at).toLocaleString()}
                 </Text>

@@ -20,6 +20,7 @@ async def create_post(session: AsyncSession, user_id: int, data: PostCreate) -> 
         document_id=data.document_id,
         title=data.title,
         body=data.body,
+        is_anonymous=data.is_anonymous,
     )
     session.add(post)
     # Flush, don't commit: the caller owns the transaction boundary. This

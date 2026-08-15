@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Box,
   Button,
   Center,
@@ -168,7 +169,15 @@ export function PostDetailPage() {
           pb="sm"
           style={{ borderBottom: '1px solid var(--mantine-color-ink-1)' }}
         >
-          {post.author_email} · {new Date(post.created_at).toLocaleString()}
+          {post.author_email ?? 'Anonymous'}
+          {/* Other users already see "Anonymous" above; this badge is how the
+              author knows this particular post of theirs is anonymous. */}
+          {post.is_anonymous && post.author_email && (
+            <Badge size="xs" variant="light" color="gray" ml="xs">
+              Anonymous
+            </Badge>
+          )}{' '}
+          · {new Date(post.created_at).toLocaleString()}
         </Text>
         <Text
           mt="md"

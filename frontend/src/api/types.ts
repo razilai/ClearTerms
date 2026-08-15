@@ -24,12 +24,16 @@ export interface PostCreate {
   title: string
   body: string
   document_id?: number | null
+  is_anonymous?: boolean
   attachment_ids?: number[]
 }
 
 export interface CommentOut {
   id: number
-  author_email: string
+  // True for the author of an anonymous post commenting under it; author_email
+  // is then null for everyone but them.
+  is_anonymous: boolean
+  author_email: string | null
   body: string
   created_at: string
   edited_at: string | null
@@ -42,7 +46,9 @@ export interface CommentOut {
 
 export interface PostOut {
   id: number
-  author_email: string
+  // null on an anonymous post unless you are its author.
+  author_email: string | null
+  is_anonymous: boolean
   title: string
   body: string
   like_count: number

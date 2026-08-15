@@ -4,6 +4,7 @@ import {
   Container,
   Group,
   Paper,
+  Switch,
   Textarea,
   TextInput,
   Title,
@@ -23,7 +24,7 @@ export function NewPostPage() {
   const attachmentIdsRef = useRef<number[]>([])
 
   const form = useForm({
-    initialValues: { title: '', body: '' },
+    initialValues: { title: '', body: '', isAnonymous: false },
     validate: {
       title: (v) => (v.trim().length > 0 ? null : 'Title is required'),
       body: (v) => (v.trim().length > 0 ? null : 'Body is required'),
@@ -52,10 +53,11 @@ export function NewPostPage() {
       </Title>
       <Paper withBorder p="lg">
         <form
-          onSubmit={form.onSubmit(({ title, body }) =>
+          onSubmit={form.onSubmit(({ title, body, isAnonymous }) =>
             mutation.mutate({
               title: title.trim(),
               body: body.trim(),
+              is_anonymous: isAnonymous,
               attachment_ids: attachmentIdsRef.current,
             }),
           )}
@@ -77,6 +79,12 @@ export function NewPostPage() {
           <Box mt="md">
             <MediaDropzone onChange={handleAttachmentChange} disabled={mutation.isPending} />
           </Box>
+          <Switch
+            mt="md"
+            label="Post anonymously"
+            description="Other users see “Anonymous” instead of your email."
+            {...form.getInputProps('isAnonymous', { type: 'checkbox' })}
+          />
           <Group justify="flex-end" mt="xl">
             <Button variant="default" onClick={() => navigate('/forum')}>
               Cancel
