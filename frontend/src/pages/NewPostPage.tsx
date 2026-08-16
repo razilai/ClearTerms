@@ -16,7 +16,9 @@ import { useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { createPost } from '../api/forum'
+import { CharCount } from '../components/CharCount'
 import { MediaDropzone } from '../components/MediaDropzone'
+import { MAX_POST_BODY_CHARS, MAX_POST_TITLE_CHARS } from '../lib/limits'
 
 export function NewPostPage() {
   const navigate = useNavigate()
@@ -65,7 +67,7 @@ export function NewPostPage() {
           <TextInput
             label="Title"
             placeholder="What do you want to discuss?"
-            maxLength={255}
+            maxLength={MAX_POST_TITLE_CHARS}
             {...form.getInputProps('title')}
           />
           <Textarea
@@ -74,8 +76,10 @@ export function NewPostPage() {
             autosize
             minRows={6}
             mt="md"
+            maxLength={MAX_POST_BODY_CHARS}
             {...form.getInputProps('body')}
           />
+          <CharCount value={form.values.body} max={MAX_POST_BODY_CHARS} />
           <Box mt="md">
             <MediaDropzone onChange={handleAttachmentChange} disabled={mutation.isPending} />
           </Box>

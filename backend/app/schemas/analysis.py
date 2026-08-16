@@ -2,12 +2,19 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.core.config import settings
 
 
 class AnalyzeRequest(BaseModel):
+    # No max_length on text: app.api.analysis bounds it by encoded byte length
+    # and answers 413, which says "document too big" far better than the 422 a
+    # schema cap would produce. Bytes are also the honest unit — they are what
+    # the agent and the db pay for, and a multibyte doc can sit well under any
+    # character count and still be huge.
     text: str
-    url: str | None = None
+    url: str | None = Field(default=None, max_length=settings.max_url_chars)
 
 
 class FindingOut(BaseModel):

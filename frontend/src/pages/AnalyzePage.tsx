@@ -20,8 +20,10 @@ import { isNotReady } from '../api/client'
 import type { VerdictResponse } from '../api/types'
 import { AnalysisReport } from '../components/AnalysisReport'
 import { BackendNotReady } from '../components/BackendNotReady'
+import { CharCount } from '../components/CharCount'
 import { PageHeader } from '../components/PageHeader'
 import { VerdictStamp } from '../components/VerdictStamp'
+import { MAX_ANALYZE_CHARS, MAX_URL_CHARS } from '../lib/limits'
 import classes from './AnalyzePage.module.css'
 
 export function AnalyzePage() {
@@ -31,7 +33,18 @@ export function AnalyzePage() {
   const form = useForm({
     initialValues: { text: '', url: '' },
     validate: {
-      text: (v) => (v.trim().length > 0 ? null : 'Paste the terms to analyze'),
+      // No maxLength on the input itself: Mantine would silently drop the tail
+      // of a paste, and a quietly truncated document yields a confident verdict
+      // on terms the user never submitted. Block the submit instead and say by
+      // how much, so the trimming is theirs to do.
+      text: (v) => {
+        if (v.trim().length === 0) return 'Paste the terms to analyze'
+        if (v.length > MAX_ANALYZE_CHARS) {
+          const over = (v.length - MAX_ANALYZE_CHARS).toLocaleString()
+          return `Too long by ${over} characters — trim it and analyze the rest`
+        }
+        return null
+      },
       url: (v) => {
         if (!v.trim()) return null
         try {
@@ -88,12 +101,14 @@ export function AnalyzePage() {
           classNames={{ input: classes.pasteArea }}
           {...form.getInputProps('text')}
         />
+        <CharCount value={form.values.text} max={MAX_ANALYZE_CHARS} showFrom={0} />
         <TextInput
           label="Source URL"
           description="Optional — where this document lives"
           placeholder="https://example.com/terms"
           mt="lg"
           ff="monospace"
+          maxLength={MAX_URL_CHARS}
           disabled={mutation.isPending}
           {...form.getInputProps('url')}
         />
@@ -101,6 +116,9 @@ export function AnalyzePage() {
           <span className={classes.statusLine}>
             {mutation.isPending ? 'Reading the document…' : ''}
           </span>
+          {/* Left enabled on purpose: submitting is how the user gets the
+              validation message naming how far over they are. A disabled
+              button would show the red counter and explain nothing. */}
           <Button type="submit" loading={mutation.isPending}>
             Analyze document
           </Button>

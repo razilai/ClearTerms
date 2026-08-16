@@ -33,9 +33,11 @@ import {
 import type { CommentOut } from '../api/types'
 import { useAuth } from '../auth/useAuth'
 import { AttachmentGrid } from '../components/AttachmentGrid'
+import { CharCount } from '../components/CharCount'
 import { CommentItem } from '../components/CommentItem'
 import { MediaDropzone } from '../components/MediaDropzone'
 import { VoteButtons } from '../components/VoteButtons'
+import { MAX_COMMENT_BODY_CHARS } from '../lib/limits'
 
 const showError = (err: Error) =>
   notifications.show({ color: 'red', message: err.message })
@@ -252,9 +254,11 @@ export function PostDetailPage() {
           placeholder="Write a comment…"
           autosize
           minRows={2}
+          maxLength={MAX_COMMENT_BODY_CHARS}
           value={commentDraft}
           onChange={(e) => setCommentDraft(e.currentTarget.value)}
         />
+        <CharCount value={commentDraft} max={MAX_COMMENT_BODY_CHARS} />
         <Box mt="sm">
           <MediaDropzone
             onChange={handleCommentAttachmentChange}

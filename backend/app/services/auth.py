@@ -39,6 +39,17 @@ async def signup(session: AsyncSession, email: str, password: str) -> User:
 
 async def login(session: AsyncSession, email: str, password: str) -> str:
     """Verify credentials and return a JWT access token."""
+    # Login arrives as OAuth2 form data, so SignupRequest's length caps never
+    # run on it — enforce them here, and *before* touching the hasher: argon2
+    # on an unbounded password is the CPU-burn this guards against, and the
+    # dummy-hash path below would pay that cost too. Rejecting as invalid
+    # credentials rather than 422 leaks nothing (an over-long input cannot
+    # match a stored hash anyway) and the length is the caller's own input.
+    if (
+        len(email) > settings.max_email_chars
+        or len(password) > settings.max_password_chars
+    ):
+        raise InvalidCredentialsError
     user = await users_repo.get_by_email(session, email.lower())
     if user is None:
         _pwd.verify(password, _DUMMY_HASH)
