@@ -35,7 +35,8 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage,
                 MessagesPage (layout stub), PersonalAreaPage
     components/ CommentItem, PreferencesPanel
-tests/          test tiers: unit.py, integration.py, system.py
+tests/          test tiers as packages: unit/, integration/, system/
+                  (per-module test_*.py + a factories.py of shared helpers per tier)
                 + devserver.py (uvicorn on a throwaway Postgres container for frontend dev)
 docker-compose.yml, backend/Dockerfile
 ```
@@ -217,8 +218,15 @@ uv run mypy .
 uv run pytest                              # from backend/ — pytest config lives in backend/pyproject.toml
 ```
 
-Test modules are named by **tier**, not `test_*.py`; `pyproject.toml` lists them
-under `python_files` or pytest skips them. `asyncio_mode = "auto"`.
+Tests are organised by **tier package** — `tests/{unit,integration,system}/`,
+each a package (has `__init__.py`, needed so same-named files like
+`unit/test_auth.py` and `integration/test_auth.py` don't collide) of per-module
+`test_*.py` files plus a `factories.py` of helpers shared within that tier.
+`asyncio_mode = "auto"`. Run one tier from `backend/` with
+`uv run pytest -c pyproject.toml ../tests/unit` — passing a path shifts pytest's
+rootdir to the repo root (which has no `pyproject.toml`) and silently drops this
+project's config, so `-c pyproject.toml` is required to keep rootdir on
+`backend/`. A bare `uv run pytest` (no path) needs no `-c`.
 
 ## Working on the frontend
 
