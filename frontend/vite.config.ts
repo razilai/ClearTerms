@@ -1,31 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Backend API prefixes share paths with SPA routes (/forum/new, /history,
-// /analyze). Only proxy programmatic requests; browser navigations
-// (Accept: text/html) fall through to index.html so refresh/deep links work.
-const backendPrefixes = [
-  '/auth',
-  '/forum',
-  '/analyze',
-  '/analyses',
-  '/history',
-  '/preferences',
-]
-
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
   server: {
-    proxy: Object.fromEntries(
-      backendPrefixes.map((prefix) => [
-        prefix,
-        {
-          target: 'http://localhost:8000',
-          bypass: (req: { headers: { accept?: string } }) =>
-            req.headers.accept?.includes('text/html') ? '/index.html' : undefined,
-        },
-      ]),
-    ),
+    // Backend calls are namespaced under /api by src/api/client.ts so that no
+    // API route can shadow an SPA route (/forum, /history and /analyze used to
+    // be both). The backend itself is unprefixed, so strip /api on the way out;
+    // frontend/nginx.conf does the same in docker. Everything else falls
+    // through to index.html, which is what makes refresh and deep links work.
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
   },
 })
