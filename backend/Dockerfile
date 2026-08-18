@@ -34,4 +34,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=5 \
 
 # alembic upgrade head brings a fresh db to the current schema, then serve. The
 # entrypoint waits on nothing here — compose gates startup on the db healthcheck.
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "uv run --no-sync alembic upgrade head && uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000"]
