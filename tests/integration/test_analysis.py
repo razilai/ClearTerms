@@ -8,8 +8,8 @@ from tests.integration.factories import ANALYZE_BODY
 # --- analysis + history + preferences ---
 #
 # Run the whole pipeline (analyze -> cache -> verdict -> history) against the
-# real repos and a real agent. Per conftest's `light_agent` fixture the model is
-# a tiny one, so a live Ollama IS required (CI installs it and pulls the model);
+# real repos and a real agent against settings.agent_model (qwen2.5:0.5b, a tiny
+# one), so a live Ollama IS required (CI installs it and pulls the model);
 # scores are therefore nondeterministic, and the assertions below check shape,
 # not fixed values.
 

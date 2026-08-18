@@ -182,7 +182,7 @@ async def classify_chunk(text: str) -> ChunkClassification:
     report. ``deps`` is the raw chunk, so evidence is checked against exactly
     the text the model was shown.
     """
-    # The default model (gemma3:4b) is non-thinking, so this is a plain prompt.
+    # The default model (qwen2.5:0.5b) is non-thinking, so this is a plain prompt.
     # `/no_think` is a model-side switch that suppresses a reasoning chain on
     # thinking models — harmless text here. Do NOT swap in a hybrid-reasoning
     # model (qwen3, deepseek-r1, ...): its `<think>` chain fights NativeOutput's

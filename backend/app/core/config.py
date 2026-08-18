@@ -52,11 +52,11 @@ class Settings(BaseSettings):
     # daemon (ollama_base_url). No explicit switch — presence of the key decides.
     ollama_base_url: str = "http://localhost:11434"
     openrouter_api_key: SecretStr = SecretStr("")
-    agent_model: str = "gemma3:4b"
+    agent_model: str = "qwen2.5:0.5b"
     # Bump on model/prompt changes to invalidate cached analyses. Must track
     # agent_model: overriding the model without bumping this writes scores from
     # one model into cache entries another model's scores are served from.
-    model_version: str = "gemma3-4b-v1"
+    model_version: str = "qwen2.5-0.5b-v1"
 
     max_analyze_bytes: int = 1_000_000
     chunk_tokens: int = 3000

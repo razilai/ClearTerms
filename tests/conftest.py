@@ -25,7 +25,6 @@ which is why the teardown is in a `finally`.
 """
 
 import asyncio
-import os
 import uuid
 from collections.abc import AsyncIterator, Iterator
 
@@ -41,9 +40,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from testcontainers.community.postgres import PostgresContainer
 
-from app.agent import classifier
 from app.core import storage as storage_module
-from app.core.config import settings
 from app.db import engine as engine_module
 from app.main import app
 
@@ -51,38 +48,9 @@ from app.main import app
 # every table on Base.metadata, which create_all below depends on.
 from app.models import Base
 
-# Every tier hits a real agent — no fakes — against a tiny instruct model, so a
-# full run stays under a minute. The `slow` tier (tests/system.py) runs against
-# settings.agent_model directly (rather than this override) to prove whatever the
-# configured production model is still works end to end. Override with
-# CLEARTERMS_TEST_AGENT_MODEL if you prefer another small model you already have
-# pulled.
-LIGHT_MODEL = os.environ.get("CLEARTERMS_TEST_AGENT_MODEL", "qwen2.5:0.5b")
-
-
-@pytest.fixture(autouse=True)
-def light_agent(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Point the agent at a small, fast model for every non-``slow`` test.
-
-    ``slow`` tests opt out and run against the production ``settings.agent_model``
-    so the real model stays covered. ``build_agent`` is ``lru_cache``d and reads
-    the model name once, so the cache is cleared around the override to force a
-    rebuild against the right model.
-    """
-    if request.node.get_closest_marker("slow"):
-        yield
-        return
-    original_model = settings.agent_model
-    original_version = settings.model_version
-    settings.agent_model = LIGHT_MODEL
-    settings.model_version = f"test-{LIGHT_MODEL}"
-    classifier.build_agent.cache_clear()
-    try:
-        yield
-    finally:
-        settings.agent_model = original_model
-        settings.model_version = original_version
-        classifier.build_agent.cache_clear()
+# Every tier hits a real agent — no fakes — against the configured
+# ``settings.agent_model`` (qwen2.5:0.5b), a tiny instruct model, so a full run
+# stays under a minute end to end.
 
 
 @pytest.fixture(scope="session")

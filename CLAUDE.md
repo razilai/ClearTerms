@@ -284,7 +284,7 @@ Bypass once with `git push --no-verify`.
 ## Stack
 
 FastAPI · SQLAlchemy 2.0 async + asyncpg · Alembic · Pydantic v2 · PyJWT ·
-pwdlib[argon2] · PydanticAI + Ollama (Qwen2.5-7B-Instruct) · uv for deps · ruff +
+pwdlib[argon2] · PydanticAI + Ollama (qwen2.5:0.5b) · uv for deps · ruff +
 mypy. **PostgreSQL** (`docker-compose.yml` runs postgres:16); tests + devserver
 use testcontainers.
 

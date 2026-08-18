@@ -65,7 +65,7 @@ services:
     # Needs a GPU VM size (Azure NC/ND/NV) plus the NVIDIA driver and Container
     # Toolkit on the host — otherwise compose fails with 'could not select device
     # driver "nvidia"'. The group VM (Standard_E4ads_v5) has no GPU, so this stays
-    # commented; CPU works out of the box but is slow for a 4B model.
+    # commented; CPU works out of the box and is fine for the 0.5B model.
     # deploy:
     #   resources:
     #     reservations:
@@ -76,22 +76,10 @@ services:
 
   # One-shot: pull the model the agent uses (must match backend agent_model /
   # model_version in app/core/config.py). Bump both when you change the model.
-  # To bring the stack up on the tiny 0.5B model instead, layer the override:
-  #   docker compose -f docker-compose.yml -f docker-compose.0.5b.yml up
+  # This is also the model the non-slow test tier runs on, so a plain
+  # `docker compose up` yields a test-ready Ollama; tests run on the host and
+  # reach it via the exposed :11434.
   ollama-pull:
-    image: ollama/ollama@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
-    depends_on:
-      ollama:
-        condition: service_healthy
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["sh", "-c", "ollama pull gemma3:4b"]
-
-  # One-shot: pull the tiny model the non-slow test tier uses (conftest.py
-  # LIGHT_MODEL / CLEARTERMS_TEST_AGENT_MODEL). Kept separate from the prod pull
-  # so `docker compose up` yields a test-ready Ollama; tests run on the host and
-  # reach it via the exposed :11434. Bump alongside conftest's LIGHT_MODEL.
-  ollama-pull-test:
     image: ollama/ollama@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42
     depends_on:
       ollama:

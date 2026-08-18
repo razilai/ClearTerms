@@ -13,11 +13,11 @@ jobs:
       run:
         working-directory: backend
     env:
-      # The default (non-slow) test tier hits a real agent against a tiny model
-      # (see tests/conftest.py::light_agent). Pin it here so the model we pull
-      # below matches what the tests ask for. The slow tier (a live production
-      # model) stays deselected in CI by pyproject's `addopts = -m 'not slow'`.
-      CLEARTERMS_TEST_AGENT_MODEL: qwen2.5:0.5b
+      # The test tier hits a real agent against the configured model
+      # (settings.agent_model, qwen2.5:0.5b — a tiny instruct model). Pin it here
+      # so the model we pull below matches app/core/config.py. The slow tier
+      # stays deselected in CI by pyproject's `addopts = -m 'not slow'`.
+      CLEARTERMS_AGENT_MODEL: qwen2.5:0.5b
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +41,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-${{ env.CLEARTERMS_TEST_AGENT_MODEL }}
+          key: ollama-${{ env.CLEARTERMS_AGENT_MODEL }}
 
       - name: Install Ollama
         run: curl -fsSL https://ollama.com/install.sh | sh
@@ -58,8 +58,8 @@ jobs:
           done
           echo "Ollama did not become ready in time" >&2; exit 1
 
-      - name: Pull test model
-        run: ollama pull "$CLEARTERMS_TEST_AGENT_MODEL"
+      - name: Pull model
+        run: ollama pull "$CLEARTERMS_AGENT_MODEL"
 
       - name: Pytest
         run: uv run pytest
