@@ -84,11 +84,17 @@ class PostDetail(PostOut):
 
 
 class MyVoteTotals(BaseModel):
-    """Personal-area header: every post this user wrote, and its vote tally."""
+    """Personal-area header: everything this user wrote, and its vote tally.
+
+    Posts and comments are tallied separately — the header renders a box each.
+    """
 
     post_count: int
     like_count: int
     dislike_count: int
+    comment_count: int
+    comment_like_count: int
+    comment_dislike_count: int
 
 
 class VoteRequest(BaseModel):

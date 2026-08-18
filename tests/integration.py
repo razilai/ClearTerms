@@ -808,7 +808,14 @@ async def test_my_vote_totals_sums_votes_across_my_posts(
     await client.put(f"/forum/posts/{second}/vote", json={"value": -1}, headers=bob)
 
     totals = (await client.get("/forum/me/vote-totals", headers=auth_headers)).json()
-    assert totals == {"post_count": 2, "like_count": 2, "dislike_count": 1}
+    assert totals == {
+        "post_count": 2,
+        "like_count": 2,
+        "dislike_count": 1,
+        "comment_count": 0,
+        "comment_like_count": 0,
+        "comment_dislike_count": 0,
+    }
 
 
 async def test_my_vote_totals_ignore_other_authors_posts(
@@ -821,7 +828,51 @@ async def test_my_vote_totals_ignore_other_authors_posts(
     )
 
     totals = (await client.get("/forum/me/vote-totals", headers=auth_headers)).json()
-    assert totals == {"post_count": 0, "like_count": 0, "dislike_count": 0}
+    assert totals == {
+        "post_count": 0,
+        "like_count": 0,
+        "dislike_count": 0,
+        "comment_count": 0,
+        "comment_like_count": 0,
+        "comment_dislike_count": 0,
+    }
+
+
+async def test_my_vote_totals_sums_votes_across_my_comments(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    post_id = await _create_post(client, auth_headers)
+    first = await _comment(client, auth_headers, post_id, "First take")
+    second = await _comment(client, auth_headers, post_id, "Second take")
+    bob = await signup_headers(client, "bob@example.com")
+    carol = await signup_headers(client, "carol@example.com")
+    await client.put(f"/forum/comments/{first}/vote", json={"value": 1}, headers=bob)
+    await client.put(f"/forum/comments/{first}/vote", json={"value": 1}, headers=carol)
+    await client.put(f"/forum/comments/{second}/vote", json={"value": -1}, headers=bob)
+
+    totals = (await client.get("/forum/me/vote-totals", headers=auth_headers)).json()
+    assert totals["comment_count"] == 2
+    assert totals["comment_like_count"] == 2
+    assert totals["comment_dislike_count"] == 1
+    # Comment votes must not leak into the post tally shown beside them.
+    assert totals["like_count"] == 0
+    assert totals["dislike_count"] == 0
+
+
+async def test_my_vote_totals_ignore_other_authors_comments(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    post_id = await _create_post(client, auth_headers)
+    bob = await signup_headers(client, "bob@example.com")
+    bobs_comment = await _comment(client, bob, post_id, "Bob's take")
+    await client.put(
+        f"/forum/comments/{bobs_comment}/vote", json={"value": 1}, headers=auth_headers
+    )
+
+    totals = (await client.get("/forum/me/vote-totals", headers=auth_headers)).json()
+    assert totals["comment_count"] == 0
+    assert totals["comment_like_count"] == 0
+    assert totals["comment_dislike_count"] == 0
 
 
 # --- analysis + history + preferences ---

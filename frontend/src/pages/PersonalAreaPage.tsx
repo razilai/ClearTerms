@@ -4,6 +4,7 @@ import {
   Card,
   Center,
   Container,
+  Divider,
   Group,
   Loader,
   Paper,
@@ -26,15 +27,48 @@ import { useKeysetPages } from '../lib/useKeysetPages'
 // section among several, not the whole screen.
 const PAGE_SIZE = 5
 
-function Stat({ label, value }: { label: string; value: number | undefined }) {
+function Tally({ glyph, label, value }: { glyph: string; label: string; value: number | undefined }) {
+  return (
+    <Stack gap={0} align="center" style={{ flex: 1 }} aria-label={label}>
+      <Text size="lg" c="dimmed" aria-hidden>
+        {glyph}
+      </Text>
+      <Text fz={28} fw={600} lh={1.2}>
+        {value ?? '—'}
+      </Text>
+    </Stack>
+  )
+}
+
+// One box per thing you can write: a heading, then likes and dislikes received
+// on it, split down the middle. Glyphs match VoteButtons (♥ / ✕).
+function VoteBox({
+  title,
+  count,
+  noun,
+  likes,
+  dislikes,
+}: {
+  title: string
+  count: number | undefined
+  noun: string
+  likes: number | undefined
+  dislikes: number | undefined
+}) {
   return (
     <Paper withBorder p="md">
       <Text size="xs" c="dimmed" tt="uppercase">
-        {label}
+        {title}
       </Text>
-      <Text fz={28} fw={600} lh={1.2} mt={4}>
-        {value ?? '—'}
+      <Text size="xs" c="dimmed" mb="sm">
+        {count ?? '—'} {noun}
+        {count === 1 ? '' : 's'} written
       </Text>
+      <Group gap={0} wrap="nowrap">
+        <Tally glyph="♥" label={`Likes received on your ${noun}s`} value={likes} />
+        <Divider orientation="vertical" />
+        <Tally glyph="✕" label={`Dislikes received on your ${noun}s`} value={dislikes} />
+      </Group>
     </Paper>
   )
 }
@@ -63,10 +97,21 @@ export function PersonalAreaPage() {
         description={email ?? undefined}
       />
 
-      <SimpleGrid cols={{ base: 1, xs: 3 }} mb="xl">
-        <Stat label="Posts" value={totals.data?.post_count} />
-        <Stat label="Likes received" value={totals.data?.like_count} />
-        <Stat label="Dislikes received" value={totals.data?.dislike_count} />
+      <SimpleGrid cols={{ base: 1, xs: 2 }} mb="xl">
+        <VoteBox
+          title="Posts"
+          noun="post"
+          count={totals.data?.post_count}
+          likes={totals.data?.like_count}
+          dislikes={totals.data?.dislike_count}
+        />
+        <VoteBox
+          title="Comments"
+          noun="comment"
+          count={totals.data?.comment_count}
+          likes={totals.data?.comment_like_count}
+          dislikes={totals.data?.comment_dislike_count}
+        />
       </SimpleGrid>
       {totals.error && (
         <Alert color="red" mb="xl">

@@ -285,6 +285,9 @@ async def my_vote_totals(session: AsyncSession, user_id: int) -> MyVoteTotals:
         post_count=totals.post_count,
         like_count=totals.likes,
         dislike_count=totals.dislikes,
+        comment_count=totals.comment_count,
+        comment_like_count=totals.comment_likes,
+        comment_dislike_count=totals.comment_dislikes,
     )
 
 

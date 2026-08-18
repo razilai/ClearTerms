@@ -71,11 +71,15 @@ export interface Page<T> {
   next_cursor: string | null
 }
 
-// Totals across every post you ever wrote — not just the page on screen.
+// Totals across everything you ever wrote — not just the page on screen.
+// Posts and comments are tallied separately; the personal area shows a box each.
 export interface MyVoteTotals {
   post_count: number
   like_count: number
   dislike_count: number
+  comment_count: number
+  comment_like_count: number
+  comment_dislike_count: number
 }
 
 export interface VoteResponse {

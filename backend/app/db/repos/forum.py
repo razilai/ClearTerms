@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import NamedTuple, TypeVar
 
-from sqlalchemy import delete, func, select, tuple_
+from sqlalchemy import Row, delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Comment, CommentVote, Post, PostVote
@@ -59,30 +59,57 @@ class AuthorTotals(NamedTuple):
     post_count: int
     likes: int
     dislikes: int
+    comment_count: int
+    comment_likes: int
+    comment_dislikes: int
+
+
+def _split_votes(rows: Iterable[Row[tuple[int, int]]]) -> tuple[int, int]:
+    """Fold a (value, count) group-by into (likes, dislikes)."""
+    likes = dislikes = 0
+    for value, count in rows:
+        if value > 0:
+            likes = count
+        else:
+            dislikes = count
+    return likes, dislikes
 
 
 async def author_totals(session: AsyncSession, user_id: int) -> AuthorTotals:
-    """How many posts this user wrote and how they were voted on, in aggregate.
+    """What this user wrote — posts and comments — and how it was voted on.
 
-    Two grouped queries rather than a page-and-sum: the personal-area header must
-    cover every post the user ever wrote, not just the page on screen.
+    Grouped queries rather than a page-and-sum: the personal-area header must
+    cover everything the user ever wrote, not just the page on screen. Posts and
+    comments stay separate tallies; the header shows one box for each.
     """
     posts = await session.execute(
         select(func.count()).select_from(Post).where(Post.user_id == user_id)
     )
-    votes = await session.execute(
+    post_votes = await session.execute(
         select(PostVote.value, func.count())
         .join(Post, Post.id == PostVote.target_id)
         .where(Post.user_id == user_id)
         .group_by(PostVote.value)
     )
-    likes = dislikes = 0
-    for value, count in votes.all():
-        if value > 0:
-            likes = count
-        else:
-            dislikes = count
-    return AuthorTotals(posts.scalar_one(), likes, dislikes)
+    comments = await session.execute(
+        select(func.count()).select_from(Comment).where(Comment.user_id == user_id)
+    )
+    comment_votes = await session.execute(
+        select(CommentVote.value, func.count())
+        .join(Comment, Comment.id == CommentVote.target_id)
+        .where(Comment.user_id == user_id)
+        .group_by(CommentVote.value)
+    )
+    likes, dislikes = _split_votes(post_votes.all())
+    comment_likes, comment_dislikes = _split_votes(comment_votes.all())
+    return AuthorTotals(
+        posts.scalar_one(),
+        likes,
+        dislikes,
+        comments.scalar_one(),
+        comment_likes,
+        comment_dislikes,
+    )
 
 
 async def delete_post(session: AsyncSession, post_id: int) -> None:
