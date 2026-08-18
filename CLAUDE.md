@@ -281,3 +281,14 @@ use testcontainers.
 - Keep the layer boundaries above; don't let `api` reach past `services`.
 - Bump `settings.model_version` on model/prompt changes to invalidate cached
   analyses.
+- **Input length caps** live in `core/config.py` (`max_*_chars`) and are enforced
+  by the Pydantic schemas; `frontend/src/lib/limits.ts` hand-mirrors them for UX
+  only — change both together. Login is the exception: it arrives as OAuth2 form
+  data with no schema, so `services/auth.py::login` checks the email/password
+  caps itself, **before** touching argon2 (hashing an unbounded password is the
+  CPU-burn the cap exists to stop), and answers 401 rather than 422. The analyze
+  paste box is bounded in *bytes* by `max_analyze_bytes` in `api/analysis.py`
+  (413), not by a schema `max_length`; the frontend never sets `maxLength` on it
+  — silent truncation of a pasted TOS would yield a confident verdict on a
+  document the user never submitted, so it shows a `CharCount` and blocks submit
+  with a validator instead.

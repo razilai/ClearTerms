@@ -22,9 +22,10 @@ class AttachmentOut(BaseModel):
 
 
 class PostCreate(BaseModel):
-    # Length caps mirror the VARCHAR columns on app.models.forum.Post.
-    title: str = Field(min_length=1, max_length=255)
-    body: str = Field(min_length=1)
+    # title's cap mirrors the VARCHAR column on app.models.forum.Post; body is
+    # a TEXT column, so its cap is product policy, not storage.
+    title: str = Field(min_length=1, max_length=settings.max_post_title_chars)
+    body: str = Field(min_length=1, max_length=settings.max_post_body_chars)
     document_id: int | None = None
     is_anonymous: bool = False
     attachment_ids: list[int] = Field(
@@ -33,14 +34,15 @@ class PostCreate(BaseModel):
 
 
 class CommentCreate(BaseModel):
-    body: str = Field(min_length=1)
+    body: str = Field(min_length=1, max_length=settings.max_comment_body_chars)
     attachment_ids: list[int] = Field(
         default_factory=list, max_length=settings.max_attachments_per_item
     )
 
 
 class CommentUpdate(BaseModel):
-    body: str = Field(min_length=1)
+    # Same cap as CommentCreate — otherwise editing is a way around it.
+    body: str = Field(min_length=1, max_length=settings.max_comment_body_chars)
 
 
 class CommentOut(BaseModel):

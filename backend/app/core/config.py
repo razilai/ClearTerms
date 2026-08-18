@@ -57,6 +57,19 @@ class Settings(BaseSettings):
     chunk_tokens: int = 3000
     chunk_overlap_tokens: int = 200
 
+    # Input length caps, in characters. The schemas are the enforcement point;
+    # frontend/src/lib/limits.ts hand-mirrors these for input UX only (a client
+    # cap is a courtesy, not a control — curl bypasses it). The analyze paste
+    # box has no entry here: it is bounded by max_analyze_bytes above.
+    max_email_chars: int = 254  # RFC 5321 addr-spec ceiling
+    # Argon2 hashes the whole input, so an uncapped password is a CPU-burn
+    # vector. NIST SP 800-63B asks for >=64 accepted; 128 clears that.
+    max_password_chars: int = 128
+    max_post_title_chars: int = 255  # mirrors Post.title's VARCHAR(255)
+    max_post_body_chars: int = 10_000
+    max_comment_body_chars: int = 5_000
+    max_url_chars: int = 2_048  # de-facto browser/CDN URL ceiling
+
     # Concurrent analyses. One LLM generation already saturates a laptop CPU;
     # raise only when the GPU VM can serve more than one at a time.
     analysis_workers: int = 1

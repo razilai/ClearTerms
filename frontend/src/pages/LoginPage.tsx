@@ -7,6 +7,7 @@ import { login as apiLogin } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import { AuthScaffold } from '../components/AuthScaffold'
+import { MAX_EMAIL_CHARS, MAX_PASSWORD_CHARS } from '../lib/limits'
 
 export function LoginPage() {
   const auth = useAuth()
@@ -55,12 +56,14 @@ export function LoginPage() {
         <TextInput
           label="Email"
           placeholder="you@example.com"
+          maxLength={MAX_EMAIL_CHARS}
           {...form.getInputProps('email')}
         />
         <PasswordInput
           label="Password"
           placeholder="Your password"
           mt="md"
+          maxLength={MAX_PASSWORD_CHARS}
           {...form.getInputProps('password')}
         />
         <Button type="submit" fullWidth mt="xl" loading={submitting}>

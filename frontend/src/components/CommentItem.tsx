@@ -2,7 +2,9 @@ import { ActionIcon, Badge, Button, Group, Paper, Text, Textarea } from '@mantin
 import { useState } from 'react'
 
 import type { CommentOut, VoteResponse } from '../api/types'
+import { MAX_COMMENT_BODY_CHARS } from '../lib/limits'
 import { AttachmentGrid } from './AttachmentGrid'
+import { CharCount } from './CharCount'
 import { VoteButtons } from './VoteButtons'
 
 interface Props {
@@ -85,9 +87,11 @@ export function CommentItem({
             autosize
             minRows={2}
             mt="xs"
+            maxLength={MAX_COMMENT_BODY_CHARS}
             value={draft}
             onChange={(e) => setDraft(e.currentTarget.value)}
           />
+          <CharCount value={draft} max={MAX_COMMENT_BODY_CHARS} />
           <Group justify="flex-end" gap="xs" mt="xs">
             <Button variant="default" size="xs" onClick={() => setEditing(false)}>
               Cancel

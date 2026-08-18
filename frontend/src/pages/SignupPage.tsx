@@ -7,6 +7,7 @@ import { signup as apiSignup } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import { AuthScaffold } from '../components/AuthScaffold'
+import { MAX_EMAIL_CHARS, MAX_PASSWORD_CHARS } from '../lib/limits'
 
 export function SignupPage() {
   const auth = useAuth()
@@ -58,17 +59,20 @@ export function SignupPage() {
         <TextInput
           label="Email"
           placeholder="you@example.com"
+          maxLength={MAX_EMAIL_CHARS}
           {...form.getInputProps('email')}
         />
         <PasswordInput
           label="Password"
           placeholder="At least 8 characters"
           mt="md"
+          maxLength={MAX_PASSWORD_CHARS}
           {...form.getInputProps('password')}
         />
         <PasswordInput
           label="Confirm password"
           mt="md"
+          maxLength={MAX_PASSWORD_CHARS}
           {...form.getInputProps('confirm')}
         />
         <Button type="submit" fullWidth mt="xl" loading={submitting}>
