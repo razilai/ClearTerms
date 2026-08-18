@@ -8,6 +8,7 @@ export const MAX_PASSWORD_CHARS = 128
 export const MAX_POST_TITLE_CHARS = 255
 export const MAX_POST_BODY_CHARS = 10_000
 export const MAX_COMMENT_BODY_CHARS = 5_000
+export const MAX_MESSAGE_BODY_CHARS = 5_000
 export const MAX_URL_CHARS = 2_048
 
 // Mirrors max_analyze_bytes, not a character setting: the backend bounds the

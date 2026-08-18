@@ -127,6 +127,44 @@ export interface HistoryEntryOut {
   created_at: string
 }
 
+export interface MessageOut {
+  id: number
+  conversation_id: number
+  sender_email: string
+  body: string
+  created_at: string
+  // Set once the other party opened the thread; always null on messages you
+  // received, since reading them is what clears it.
+  read_at: string | null
+  attachments: AttachmentOut[]
+}
+
+export interface ConversationOut {
+  id: number
+  // The participant who is not you — the server never sends both sides.
+  other_email: string
+  last_message_at: string
+  created_at: string
+  // Newest message, for the inbox preview; null on a thread nobody has
+  // written in yet.
+  last_message: MessageOut | null
+  unread_count: number
+}
+
+export interface ConversationDetail extends ConversationOut {
+  // First page of messages, newest first (reverse for display).
+  messages: MessageOut[]
+  messages_next_cursor: string | null
+}
+
+export interface UnreadTotal {
+  unread_count: number
+}
+
+export interface MarkReadResponse {
+  marked_count: number
+}
+
 export interface PreferenceItem {
   category: string
   enabled: boolean

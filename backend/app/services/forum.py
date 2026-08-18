@@ -43,18 +43,9 @@ from app.services.exceptions import (
 # ---------------------------------------------------------------------------
 
 
-def _attachment_out(a: Attachment) -> AttachmentOut:
-    return AttachmentOut(
-        id=a.id,
-        media_type=a.media_type,
-        status=a.status,
-        mime=a.mime,
-        width=a.width,
-        height=a.height,
-        duration_seconds=a.duration_seconds,
-        display_url=storage.presigned_get_url(a.display_key) if a.display_key else None,
-        thumbnail_url=storage.presigned_get_url(a.thumbnail_key) if a.thumbnail_key else None,
-    )
+# Shared with the messages service — attachments hang off posts, comments and
+# messages alike, so the mapper lives in app.services.media.
+_attachment_out = media_service.attachment_out
 
 
 class VoteState(NamedTuple):

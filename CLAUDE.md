@@ -33,7 +33,7 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     api/        types.ts (schema mirrors), client.ts (fetch wrapper), auth.ts, forum.ts
     auth/       context.ts, AuthContext.tsx (provider), useAuth.ts, RequireAuth.tsx, storage.ts
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage,
-                MessagesPage (layout stub), PersonalAreaPage
+                MessagesPage, PersonalAreaPage
     components/ CommentItem, PreferencesPanel
 extension/      Chrome MV3 extension (esbuild → dist/, no framework)
   src/
@@ -166,8 +166,8 @@ below).
   own, so the concurrency cap multiplies and fairness only holds within a
   process; fixing that needs an out-of-process broker, which means expressing
   jobs as data rather than callables.
-- **Frontend** (`frontend/`): login/signup, forum, **and analysis** — analyze,
-  history, analysis-detail pages against the routes above. Nav sections are
+- **Frontend** (`frontend/`): login/signup, forum, analysis — analyze, history,
+  analysis-detail pages against the routes above — **and direct messages**. Nav sections are
   §1 Analysis, §2 History, §3 Forum, §4 Messages, §5 Personal Area. There is no
   Settings page: the preference checklist lives in `components/PreferencesPanel.tsx`
   and is mounted inside `/me`, with `/settings` redirecting there. `/me`
@@ -179,8 +179,9 @@ below).
   controls. `goNext` takes the current page's `next_cursor` as an argument
   rather than closing over it — the caller only learns it from a query the
   hook's own `cursor` keys, so passing it in at construction would be a cycle.
-  Post *comments* (`PostDetailPage`) still load-more; only the two top-level
-  lists were converted. `/messages` is layout only (no DM backend).
+  Post *comments* (`PostDetailPage`) still load-more, as do message threads;
+  only the two top-level lists were converted. The DM inbox pages 15 at a time
+  like the others.
   Session = JWT + email in localStorage (no `/me` endpoint; ownership
   UI compares `author_email` to the stored email — server still enforces via 403).
   Backend calls are namespaced under **`/api`**, added in `api/client.ts::request`
@@ -214,9 +215,32 @@ below).
   script). Build/typecheck: `cd extension && npm run build` / `npm run typecheck`;
   load unpacked from `extension/dist`.
 
+- **Messages / DM** (`services/messages.py`, `api/messages.py`): one-to-one
+  conversations. `Conversation` stores its pair canonically (`user_a_id <
+  user_b_id`, a check constraint) so `UniqueConstraint(user_a_id, user_b_id)`
+  means one thread per pair, not per ordered pair; `messages_repo.get_or_create`
+  is therefore idempotent and doubles as "open the thread with X". Routes:
+  `POST/GET /messages/conversations`, `GET /messages/conversations/{id}`,
+  `GET/POST /messages/conversations/{id}/messages`,
+  `POST /messages/conversations/{id}/read`, `GET /messages/unread`. A
+  non-participant gets **404, not 403** — conversation ids are sequential, so a
+  403 would confirm two other people are talking; this deliberately departs from
+  the forum's `NotOwnerError`. `last_message_at` is denormalized and bumped on
+  each send (to the message's own `created_at`) because sorting the inbox by a
+  join onto the newest message would scan every message the user has. Inbox
+  reads batch previews (`DISTINCT ON`) and unread counts, two queries per page.
+  Threads page **newest first** (unlike comments, which read top-down); the
+  frontend reverses for display and loads older pages with a "Load older"
+  button. Rate limits are two separate per-sender budgets in `api/deps.py` —
+  `message` (flooding a thread) and the much tighter `conversation` (blasting
+  openers at strangers, the shape that actually lands in an inbox).
+  Recipients are named by **email**, the only user identifier the API exposes
+  anywhere; a consequence is that anonymous forum posters cannot be DMed.
+  Frontend: `pages/MessagesPage.tsx` (two panes, thread keyed by the URL at
+  `/messages/:conversationId` like `/forum/:postId`), unread badge on the §4 nav
+  item polled every 30s and invalidated when the inbox mounts.
+
 **Stubbed / not implemented:**
-- **Messages (DM)**: `pages/MessagesPage.tsx` is a two-pane layout placeholder.
-  No model, no routes, no service — the section exists so the shape is settled.
 - **Logging** (`core/logging.py::setup_logging`) is a no-op — wired into lifespan
   but not configured yet.
 - `services/forum.py::check_rate_limit` raises `NotImplementedError` (phase-2

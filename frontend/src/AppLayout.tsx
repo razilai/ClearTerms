@@ -1,7 +1,18 @@
-import { AppShell, Burger, Button, Group, NavLink, Stack, Text } from '@mantine/core'
+import {
+  AppShell,
+  Badge,
+  Burger,
+  Button,
+  Group,
+  NavLink,
+  Stack,
+  Text,
+} from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
+import { useQuery } from '@tanstack/react-query'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
+import { getUnreadTotal, unreadKey } from './api/messages'
 import classes from './AppLayout.module.css'
 import { useAuth } from './auth/useAuth'
 
@@ -29,6 +40,15 @@ export function AppLayout() {
   const { pathname } = useLocation()
   const [asideOpened, { toggle: toggleAside, close: closeAside }] =
     useDisclosure(false)
+  // Polled so a message that arrives while the user sits on another section
+  // still shows up; MessagesPage also invalidates this on mount, so opening
+  // the inbox refreshes it immediately rather than waiting out the interval.
+  const { data: unread } = useQuery({
+    queryKey: unreadKey,
+    queryFn: getUnreadTotal,
+    refetchInterval: 30_000,
+  })
+  const unreadCount = unread?.unread_count ?? 0
 
   return (
     <AppShell
@@ -84,6 +104,13 @@ export function AppLayout() {
               label={<span className={classes.navLabel}>{item.label}</span>}
               leftSection={
                 <span className={classes.section}>{item.section}</span>
+              }
+              rightSection={
+                item.to === '/messages' && unreadCount > 0 ? (
+                  <Badge size="sm" circle>
+                    {unreadCount}
+                  </Badge>
+                ) : undefined
               }
               active={isActive(pathname, item.to)}
               className={classes.navLink}

@@ -87,8 +87,9 @@ async def _claim(
     *,
     post_id: int | None = None,
     comment_id: int | None = None,
+    message_id: int | None = None,
 ) -> list[Attachment]:
-    """Link unlinked, user-owned attachments to a post or comment.
+    """Link unlinked, user-owned attachments to a post, comment or message.
 
     Returns all fetched rows. Caller detects mismatch by comparing the returned
     set to the requested ids.
@@ -98,10 +99,16 @@ async def _claim(
     result = await session.execute(select(Attachment).where(Attachment.id.in_(ids)))
     rows = list(result.scalars().all())
     for a in rows:
-        if a.user_id != user_id or a.post_id is not None or a.comment_id is not None:
+        if (
+            a.user_id != user_id
+            or a.post_id is not None
+            or a.comment_id is not None
+            or a.message_id is not None
+        ):
             return rows  # service will detect the mismatch
         a.post_id = post_id
         a.comment_id = comment_id
+        a.message_id = message_id
     await session.flush()
     return rows
 
@@ -116,6 +123,12 @@ async def claim_for_comment(
     session: AsyncSession, ids: list[int], user_id: int, comment_id: int
 ) -> list[Attachment]:
     return await _claim(session, ids, user_id, comment_id=comment_id)
+
+
+async def claim_for_message(
+    session: AsyncSession, ids: list[int], user_id: int, message_id: int
+) -> list[Attachment]:
+    return await _claim(session, ids, user_id, message_id=message_id)
 
 
 async def set_ready(
@@ -173,6 +186,30 @@ async def keys_for_comment(session: AsyncSession, comment_id: int) -> list[str]:
     return _attachment_keys(list(result.scalars().all()))
 
 
+async def list_for_messages(
+    session: AsyncSession, message_ids: Iterable[int]
+) -> dict[int, list[Attachment]]:
+    """Map message_id -> attachments; one query per page, not per message."""
+    ids = list(message_ids)
+    if not ids:
+        return {}
+    result = await session.execute(
+        select(Attachment).where(Attachment.message_id.in_(ids))
+    )
+    rows = result.scalars().all()
+    out: dict[int, list[Attachment]] = {}
+    for a in rows:
+        out.setdefault(a.message_id, []).append(a)  # type: ignore[arg-type]
+    return out
+
+
+async def keys_for_message(session: AsyncSession, message_id: int) -> list[str]:
+    result = await session.execute(
+        select(Attachment).where(Attachment.message_id == message_id)
+    )
+    return _attachment_keys(list(result.scalars().all()))
+
+
 async def list_unlinked_before(
     session: AsyncSession, before_epoch: float
 ) -> list[Attachment]:
@@ -184,6 +221,9 @@ async def list_unlinked_before(
         select(Attachment).where(
             Attachment.post_id.is_(None),
             Attachment.comment_id.is_(None),
+            # Without this a claimed message attachment looks unlinked and the
+            # sweep would delete a file someone is still looking at.
+            Attachment.message_id.is_(None),
             Attachment.created_at < cutoff,
         )
     )

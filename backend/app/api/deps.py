@@ -105,3 +105,28 @@ async def rate_limit_analyze(user: CurrentUserDep) -> None:
         settings.rate_limit_analyze_max,
         settings.rate_limit_analyze_window_seconds,
     )
+
+
+async def rate_limit_send_message(user: CurrentUserDep) -> None:
+    """Throttle DM sends by sender — caps flooding a thread."""
+    await rate_limit_service.enforce(
+        "message",
+        str(user.id),
+        settings.rate_limit_message_max,
+        settings.rate_limit_message_window_seconds,
+    )
+
+
+async def rate_limit_start_conversation(user: CurrentUserDep) -> None:
+    """Throttle opening threads by sender — caps mass unsolicited DMs.
+
+    Keyed on the sender, not the (sender, recipient) pair: a pair key would let
+    one account open a thread with every user in the system and still be inside
+    its budget, which is the spam shape that matters here.
+    """
+    await rate_limit_service.enforce(
+        "conversation",
+        str(user.id),
+        settings.rate_limit_conversation_max,
+        settings.rate_limit_conversation_window_seconds,
+    )

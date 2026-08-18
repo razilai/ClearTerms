@@ -57,6 +57,12 @@ createRoot(document.getElementById('root')!).render(
                   <Route path="/forum/new" element={<NewPostPage />} />
                   <Route path="/forum/:postId" element={<PostDetailPage />} />
                   <Route path="/messages" element={<MessagesPage />} />
+                  {/* Same page: the thread is a detail view keyed by the URL,
+                      like /forum/:postId, so refresh and back keep your place. */}
+                  <Route
+                    path="/messages/:conversationId"
+                    element={<MessagesPage />}
+                  />
                   <Route path="/me" element={<PersonalAreaPage />} />
                   {/* Preferences moved into the personal area; keep old links alive. */}
                   <Route
