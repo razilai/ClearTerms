@@ -2,8 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [main, "dev_*"]
+    branches: [main]   # feature branches are covered by the pull_request trigger
   pull_request:
+
+# Least privilege: CI only reads the repo.
+permissions:
+  contents: read
+
+# One run per ref; a newer push cancels an in-flight run on the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
@@ -25,6 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          version: "0.12"   # match backend/Dockerfile's pinned uv
 
       - name: Sync deps
         run: uv sync --frozen
@@ -76,7 +86,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22   # match frontend/Dockerfile + .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -88,3 +98,32 @@ jobs:
 
       - name: Build (typecheck gate)
         run: npm run build
+
+  images:
+    name: Images (docker build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build-only — no registry push, no deploy. Catches a broken Dockerfile or
+      # nginx.conf before it reaches a deploy. No Ollama/db needed for a build.
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          load: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max

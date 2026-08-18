@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
-# uv: fast, reproducible installs from the committed lockfile.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# uv: fast, reproducible installs from the committed lockfile. Pinned (not
+# :latest) so image builds are reproducible; bump deliberately with CI's setup-uv.
+COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /uvx /bin/
 
 WORKDIR /app
 
