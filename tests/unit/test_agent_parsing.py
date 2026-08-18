@@ -1,7 +1,7 @@
 """Unit tests for the agent layer: document chunking.
 
 Pure functions only — no model, no Ollama, no database. Anything that depends
-on what a real model does lives in ``tests/system.py``.
+on what a real model does lives in ``tests/system/test_agent.py``.
 """
 
 import pytest
@@ -220,7 +220,7 @@ def test_the_default_counter_is_built_once_per_process() -> None:
 # --- analyze: whole document ------------------------------------------------
 #
 # classify_chunk is stubbed throughout: what a real model returns belongs in
-# tests/system.py. What is under test here is fan-out and the merge.
+# tests/system/test_agent.py. What is under test here is fan-out and the merge.
 
 MULTI_SECTION = (
     "1. Dispute Resolution.\nYou agree to binding arbitration.\n\n"

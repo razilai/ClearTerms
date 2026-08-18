@@ -44,8 +44,8 @@ packages = ["app"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["../tests"]
-# Test modules are named by tier, not test_*.py — list them or pytest skips them.
-python_files = ["unit.py", "unit_agent.py", "integration.py", "system.py"]
+# Tests live in tier packages under tests/{unit,integration,system}/ as test_*.py.
+python_files = ["test_*.py"]
 # tests/ is a package, so pytest puts the repo root on sys.path, not backend/.
 # Pin backend/ explicitly (relative to rootdir) so `import app` does not depend
 # on the editable install's .pth being honoured.
