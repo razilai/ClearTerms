@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     rate_limit_login_window_seconds: int = 300
     rate_limit_analyze_max: int = 20
     rate_limit_analyze_window_seconds: int = 3600
+    # Direct messages, both keyed per sender. Two separate budgets because the
+    # abuse shapes differ: flooding one thread is throttled by `message`, while
+    # blasting unsolicited openers at many people is throttled by the much
+    # tighter `conversation` — a new thread is what actually lands in a
+    # stranger's inbox, so it is the scarcer resource.
+    rate_limit_message_max: int = 60
+    rate_limit_message_window_seconds: int = 60
+    rate_limit_conversation_max: int = 20
+    rate_limit_conversation_window_seconds: int = 3600
     rate_limit_sweep_interval_seconds: int = 600
 
     # Object storage (MinIO in dev via docker-compose; swap endpoint env vars for
