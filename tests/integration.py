@@ -28,6 +28,25 @@ async def _create_post(client: httpx.AsyncClient, headers: dict) -> int:
     return resp.json()["id"]
 
 
+async def _start_conversation(
+    client: httpx.AsyncClient, headers: dict, recipient: str = "bob@example.com"
+) -> int:
+    """Open the caller's thread with ``recipient``, signing them up if needed.
+
+    409 on the signup just means an earlier call in this test already created
+    them — the recipient has to exist because the API names people by email.
+    """
+    signup = await client.post(
+        "/auth/signup", json={"email": recipient, "password": "hunter2!"}
+    )
+    assert signup.status_code in (201, 409), signup.text
+    resp = await client.post(
+        "/messages/conversations", json={"recipient_email": recipient}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
 # --- auth ---
 
 
@@ -228,6 +247,18 @@ async def test_analyze_overlong_url_rejected(
     resp = await client.post(
         "/analyze",
         json={"text": "short", "url": "https://ex.test/" + "x" * settings.max_url_chars},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_message_overlong_body_rejected(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    conversation_id = await _start_conversation(client, auth_headers)
+    resp = await client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "x" * (settings.max_message_body_chars + 1)},
         headers=auth_headers,
     )
     assert resp.status_code == 422
@@ -1409,3 +1440,221 @@ async def test_analyze_is_rate_limited_per_user(
     )
     assert limited.status_code == 429
     assert "Retry-After" in limited.headers
+
+
+async def test_send_message_is_rate_limited(
+    client: httpx.AsyncClient, auth_headers: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proves the limiter dependency is attached to the send route, not just
+    defined — a dep that is never wired up would let all three through."""
+    monkeypatch.setattr(settings, "rate_limit_message_max", 2)
+    conversation_id = await _start_conversation(client, auth_headers)
+
+    for _ in range(2):
+        allowed = await client.post(
+            f"/messages/conversations/{conversation_id}/messages",
+            json={"body": "hi"},
+            headers=auth_headers,
+        )
+        assert allowed.status_code == 201, allowed.text
+
+    limited = await client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "hi"},
+        headers=auth_headers,
+    )
+    assert limited.status_code == 429
+    assert "Retry-After" in limited.headers
+
+
+async def test_start_conversation_is_rate_limited(
+    client: httpx.AsyncClient, auth_headers: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opening threads has its own, tighter budget than sending into one."""
+    monkeypatch.setattr(settings, "rate_limit_conversation_max", 1)
+    await _start_conversation(client, auth_headers)
+
+    limited = await client.post(
+        "/messages/conversations",
+        json={"recipient_email": "bob@example.com"},
+        headers=auth_headers,
+    )
+    assert limited.status_code == 429
+
+
+# --- direct messages ---
+
+
+async def test_dm_round_trip(client: httpx.AsyncClient, auth_headers: dict) -> None:
+    """Send from one account, read it from the other: inbox, preview, unread."""
+    bob = await signup_headers(client, "bob@example.com")
+    conversation_id = await _start_conversation(client, auth_headers)
+
+    sent = await client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "hello bob"},
+        headers=auth_headers,
+    )
+    assert sent.status_code == 201, sent.text
+    assert sent.json()["sender_email"] == "alice@example.com"
+    assert sent.json()["read_at"] is None
+
+    inbox = (await client.get("/messages/conversations", headers=bob)).json()
+    assert [c["id"] for c in inbox["items"]] == [conversation_id]
+    entry = inbox["items"][0]
+    # The far side of the pair, never both participants.
+    assert entry["other_email"] == "alice@example.com"
+    assert entry["last_message"]["body"] == "hello bob"
+    assert entry["unread_count"] == 1
+    assert (await client.get("/messages/unread", headers=bob)).json() == {
+        "unread_count": 1
+    }
+
+    detail = (
+        await client.get(f"/messages/conversations/{conversation_id}", headers=bob)
+    ).json()
+    assert [m["body"] for m in detail["messages"]] == ["hello bob"]
+
+    read = await client.post(
+        f"/messages/conversations/{conversation_id}/read", headers=bob
+    )
+    assert read.json() == {"marked_count": 1}
+    assert (await client.get("/messages/unread", headers=bob)).json() == {
+        "unread_count": 0
+    }
+    # Alice never had anything unread: her own message doesn't count for her.
+    assert (await client.get("/messages/unread", headers=auth_headers)).json() == {
+        "unread_count": 0
+    }
+
+
+async def test_dm_start_conversation_is_idempotent(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    """A pair maps to one thread, so "message this person" always lands in it."""
+    # bob signs up here, so _start_conversation's own signup attempt 409s — which
+    # it tolerates.
+    bob = await signup_headers(client, "bob@example.com")
+    first = await _start_conversation(client, auth_headers)
+    assert await _start_conversation(client, auth_headers) == first
+
+    # And the recipient reaching back finds the same thread, from their side.
+    from_bob = await client.post(
+        "/messages/conversations",
+        json={"recipient_email": "alice@example.com"},
+        headers=bob,
+    )
+    assert from_bob.status_code == 201, from_bob.text
+    assert from_bob.json()["id"] == first
+    assert from_bob.json()["other_email"] == "alice@example.com"
+
+
+async def test_dm_cannot_message_self_or_unknown_user(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    same = await client.post(
+        "/messages/conversations",
+        json={"recipient_email": "alice@example.com"},
+        headers=auth_headers,
+    )
+    # 400, not a 500 from ck_conversations_user_order.
+    assert same.status_code == 400, same.text
+
+    ghost = await client.post(
+        "/messages/conversations",
+        json={"recipient_email": "ghost@example.com"},
+        headers=auth_headers,
+    )
+    assert ghost.status_code == 404
+
+
+async def test_dm_outsider_gets_404_not_403(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    """403 would confirm two other people have a thread; ids are sequential, so
+    a non-participant must not be able to tell existence from absence."""
+    conversation_id = await _start_conversation(client, auth_headers)
+    await client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "private"},
+        headers=auth_headers,
+    )
+    outsider = await signup_headers(client, "cy@example.com")
+
+    reads = [
+        await client.get(
+            f"/messages/conversations/{conversation_id}", headers=outsider
+        ),
+        await client.get(
+            f"/messages/conversations/{conversation_id}/messages", headers=outsider
+        ),
+        await client.post(
+            f"/messages/conversations/{conversation_id}/messages",
+            json={"body": "intruding"},
+            headers=outsider,
+        ),
+        await client.post(
+            f"/messages/conversations/{conversation_id}/read", headers=outsider
+        ),
+    ]
+    assert [r.status_code for r in reads] == [404, 404, 404, 404]
+
+    # A conversation id that does not exist at all is indistinguishable.
+    missing = await client.get(
+        f"/messages/conversations/{conversation_id + 1000}", headers=outsider
+    )
+    assert missing.status_code == 404
+
+
+async def test_dm_routes_require_auth(client: httpx.AsyncClient) -> None:
+    for method, path, body in [
+        ("get", "/messages/unread", None),
+        ("get", "/messages/conversations", None),
+        ("post", "/messages/conversations", {"recipient_email": "a@b.com"}),
+        ("get", "/messages/conversations/1", None),
+        ("get", "/messages/conversations/1/messages", None),
+        ("post", "/messages/conversations/1/messages", {"body": "x"}),
+        ("post", "/messages/conversations/1/read", None),
+    ]:
+        resp = await client.request(method, path, json=body)
+        assert resp.status_code == 401, f"{method.upper()} {path} -> {resp.status_code}"
+
+
+async def test_dm_thread_pages_newest_first(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    conversation_id = await _start_conversation(client, auth_headers)
+    for i in range(3):
+        await client.post(
+            f"/messages/conversations/{conversation_id}/messages",
+            json={"body": f"m{i}"},
+            headers=auth_headers,
+        )
+
+    page = await client.get(
+        f"/messages/conversations/{conversation_id}/messages",
+        params={"limit": 2},
+        headers=auth_headers,
+    )
+    body = page.json()
+    assert [m["body"] for m in body["items"]] == ["m2", "m1"]
+    assert body["next_cursor"] is not None
+
+    older = await client.get(
+        f"/messages/conversations/{conversation_id}/messages",
+        params={"limit": 2, "cursor": body["next_cursor"]},
+        headers=auth_headers,
+    )
+    assert [m["body"] for m in older.json()["items"]] == ["m0"]
+    assert older.json()["next_cursor"] is None
+
+
+async def test_dm_invalid_cursor_is_400(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    resp = await client.get(
+        "/messages/conversations",
+        params={"cursor": "not-a-cursor"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
