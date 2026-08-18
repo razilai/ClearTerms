@@ -19,17 +19,12 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage", "scripting", "tabs"],
+  "permissions": ["storage", "scripting", "activeTab"],
   "host_permissions": [
     "http://localhost:8000/*",
     "http://localhost:5173/*"
   ],
   "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content-detector.js"],
-      "run_at": "document_idle"
-    },
     {
       "matches": ["http://localhost:5173/*"],
       "js": ["content-token.js"],

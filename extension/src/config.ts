@@ -28,6 +28,3 @@ export const CACHE_EMAIL_KEY = 'ct_email'
 // Margin under the backend's max_analyze_bytes (1_000_000) so a slightly-off
 // byte estimate never trips the 413.
 export const MAX_ANALYZE_BYTES = 950_000
-
-export const BADGE_TEXT = 'TOS'
-export const BADGE_COLOR = '#1c7ed6'

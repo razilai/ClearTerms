@@ -1,13 +1,13 @@
-// Runs on every page (broad match). Jobs:
-//   (1) auto-detect whether this page is a Terms-of-Service / legal agreement,
-//       OR carries an "I agree to <terms>" checkbox linking to one, and tell the
-//       worker to raise the badge;
-//   (2) on demand (SCRAPE_TOS from the worker) return the readable text — from a
-//       linked terms doc if an agreement checkbox was found, else from the page.
+// Injected on demand into the active tab when the popup opens — never runs
+// passively on every site. Jobs, both worker-driven:
+//   (1) DETECT_TOS: report whether this page is a Terms-of-Service / legal
+//       agreement, OR carries an "I agree to <terms>" checkbox linking to one;
+//   (2) SCRAPE_TOS: return the readable text — from a linked terms doc if an
+//       agreement checkbox was found, else from the page.
 // It never talks to the backend and never touches the token.
 
 import { MAX_ANALYZE_BYTES } from './config'
-import type { DetectionSource, Message, ScrapeResult } from './types'
+import type { DetectResult, DetectionSource, Message, ScrapeResult } from './types'
 
 // Same-origin terms links found next to an agreement checkbox. Kept in module
 // scope (content scripts live as long as the page) so SCRAPE_TOS can use them.
@@ -111,27 +111,14 @@ function findAgreementLinks(): string[] {
 
 // --- run detection --------------------------------------------------------
 
-function runDetection(): void {
+// Re-run fresh each DETECT_TOS so a popup opened after client-side navigation
+// sees the current page. Records agreementLinks for a subsequent SCRAPE_TOS.
+function runDetection(): DetectionSource | null {
   agreementLinks = findAgreementLinks()
-  let source: DetectionSource | null = null
-  if (pageIsTos()) source = 'page'
-  else if (agreementLinks.length > 0) source = 'agreement'
-  if (!source) return
-
-  const msg: Message = {
-    type: 'TOS_DETECTED',
-    url: location.href,
-    title: document.title,
-    confidence: source === 'page' ? 2 : 1,
-    source,
-  }
-  chrome.runtime.sendMessage(msg).catch(() => {})
+  if (pageIsTos()) return 'page'
+  if (agreementLinks.length > 0) return 'agreement'
+  return null
 }
-
-runDetection()
-// Many legal pages / forms are client-routed; re-check on SPA navigation.
-window.addEventListener('popstate', runDetection)
-window.addEventListener('hashchange', runDetection)
 
 // --- text extraction ------------------------------------------------------
 
@@ -213,11 +200,29 @@ async function scrape(): Promise<ScrapeResult> {
 
 // --- message handling -----------------------------------------------------
 
-chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
-  if (msg.type === 'SCRAPE_TOS') {
-    // Async (agreement links are fetched) — return true to keep the channel open.
-    scrape().then(sendResponse)
-    return true
+// The worker re-injects this file each time the popup opens; a sentinel keeps a
+// second injection from registering a duplicate listener (which would call
+// sendResponse twice and throw "message channel closed").
+declare global {
+  interface Window {
+    __ct_detector_loaded?: boolean
   }
-  return
-})
+}
+
+if (!window.__ct_detector_loaded) {
+  window.__ct_detector_loaded = true
+
+  chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
+    if (msg.type === 'DETECT_TOS') {
+      const result: DetectResult = { injectable: true, source: runDetection() }
+      sendResponse(result)
+      return
+    }
+    if (msg.type === 'SCRAPE_TOS') {
+      // Async (agreement links are fetched) — return true to keep the channel open.
+      scrape().then(sendResponse)
+      return true
+    }
+    return
+  })
+}

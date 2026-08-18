@@ -35,6 +35,14 @@ frontend/       React web app (Vite + TS + Mantine + TanStack Query)
     pages/      LoginPage, SignupPage, PostListPage, NewPostPage, PostDetailPage,
                 MessagesPage (layout stub), PersonalAreaPage
     components/ CommentItem, PreferencesPanel
+extension/      Chrome MV3 extension (esbuild → dist/, no framework)
+  src/
+    background.ts       service worker — ONLY backend caller; on-demand inject
+    content-detector.ts injected into active tab on popup open — DETECT/SCRAPE
+    content-token.ts    web-app origin only — relays JWT from page localStorage
+    popup.ts            popup UI (logged-out / idle / analyzing / result / error)
+    config.ts, types.ts shared constants + message protocol
+  public/         manifest.json, popup.html/css, icons (copied verbatim to dist/)
 tests/          test tiers as packages: unit/, integration/, system/
                   (per-module test_*.py + a factories.py of shared helpers per tier)
                 + devserver.py (uvicorn on a throwaway Postgres container for frontend dev)
@@ -59,7 +67,8 @@ core  (shared leaf; imports from none of the above)
 
 Backend covers auth, forum, and the analysis pipeline (analyze + history +
 preferences); the web app frontend covers all of these. The Chrome extension
-does **not exist yet** (see stubbed list below).
+**exists** and analyzes pages against the same `POST /analyze` (see its section
+below).
 
 **Implemented:**
 - **Auth** (`services/auth.py`, `api/auth.py`): signup, login, JWT issue/verify.
@@ -183,6 +192,27 @@ does **not exist yet** (see stubbed list below).
   backend-relative paths. No CORS configured on the backend (deliberate — revisit
   at deployment). Vote state (`like_count`, `dislike_count`, `my_vote`) ships on
   every post and comment read, so buttons render pressed-state on first paint.
+- **Chrome extension** (`extension/`, MV3, esbuild → `dist/`, no framework):
+  thin — scrapes page text and POSTs the same `POST /analyze` the web app uses;
+  the result lands in web-app history. No login of its own: `content-token.ts`
+  (the only static content script, web-app origin only) reads the JWT the web app
+  writes to `localStorage` and relays it to the worker. **Detection is
+  on-demand**, not passive — nothing runs on a page until the popup opens, at
+  which point the worker injects `content-detector.js` into the **active tab
+  only** (`activeTab` + `chrome.scripting`, no `<all_urls>` script, no `tabs`
+  permission) and asks it (`DETECT_TOS`) whether the page is a TOS or carries an
+  "I agree to <terms>" checkbox linking to a **same-origin** terms doc. The popup
+  then offers "Analyze linked terms" (fetches + parses the linked docs via
+  `DOMParser`) or "Analyze full page"; restricted pages (chrome://, Web Store,
+  PDF) are non-injectable and say so. A `window.__ct_detector_loaded` sentinel
+  makes re-injection idempotent. `background.ts` is the **only** context that
+  calls the backend (MV3 background `fetch` bypasses CORS for `host_permissions`
+  origins) and keeps all state in `chrome.storage.local` (worker is ephemeral).
+  Dev origins live in **two places that must stay in sync** — `src/config.ts` and
+  `public/manifest.json` (`host_permissions` + `content_scripts` matches); add
+  prod origins to both. There is no passive badge (dropped with the always-on
+  script). Build/typecheck: `cd extension && npm run build` / `npm run typecheck`;
+  load unpacked from `extension/dist`.
 
 **Stubbed / not implemented:**
 - **Messages (DM)**: `pages/MessagesPage.tsx` is a two-pane layout placeholder.

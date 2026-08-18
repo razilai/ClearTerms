@@ -21,41 +21,46 @@ export interface AuthRelayMsg {
 // "I agree to <terms>" checkbox linking to one ('agreement').
 export type DetectionSource = 'page' | 'agreement'
 
-// --- content-detector -> background ---
-export interface TosDetectedMsg {
-  type: 'TOS_DETECTED'
-  url: string
-  title: string
-  confidence: number
-  source: DetectionSource
-}
-
 // --- popup -> background ---
 export interface GetAuthStateMsg {
   type: 'GET_AUTH_STATE'
+}
+// Popup open triggers on-demand detection of the active tab (injects the
+// detector, then asks it what it found). Replaces the old passive per-page scan.
+export interface DetectActiveTabMsg {
+  type: 'DETECT_ACTIVE_TAB'
 }
 export interface AnalyzeActiveTabMsg {
   type: 'ANALYZE_ACTIVE_TAB'
 }
 
 // --- background -> content-detector ---
+export interface DetectTosMsg {
+  type: 'DETECT_TOS'
+}
 export interface ScrapeTosMsg {
   type: 'SCRAPE_TOS'
 }
 
 export type Message =
   | AuthRelayMsg
-  | TosDetectedMsg
   | GetAuthStateMsg
+  | DetectActiveTabMsg
   | AnalyzeActiveTabMsg
+  | DetectTosMsg
   | ScrapeTosMsg
 
 // --- responses ---
 export interface AuthState {
   loggedIn: boolean
   email: string | null
-  // What the worker flagged on the active tab, or null if nothing.
-  detection: DetectionSource | null
+}
+
+// Result of on-demand detection. `injectable` is false on restricted pages
+// (chrome://, Web Store, PDF viewer) where the detector can't be injected.
+export interface DetectResult {
+  injectable: boolean
+  source: DetectionSource | null
 }
 
 export interface ScrapeResult {

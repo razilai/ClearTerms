@@ -2,7 +2,7 @@
 // analysis results, and opens web-app tabs for login / result deep links.
 
 import { HISTORY_URL, LOGIN_URL, analysisDetailUrl } from './config'
-import type { AnalyzeResult, AuthState, Message } from './types'
+import type { AnalyzeResult, AuthState, DetectResult, Message } from './types'
 
 const root = document.getElementById('root') as HTMLElement
 const emailEl = document.getElementById('email') as HTMLElement
@@ -43,16 +43,24 @@ function renderLoggedOut(note?: string): void {
   )
 }
 
-function renderIdle(state: AuthState): void {
+function renderIdle(email: string | null, detect: DetectResult): void {
   clear()
-  emailEl.textContent = state.email ?? ''
+  emailEl.textContent = email ?? ''
+
+  // Restricted pages (chrome://, Web Store, PDF viewer) can't be injected, so
+  // there's nothing to scrape — say so instead of offering a dead button.
+  if (!detect.injectable) {
+    root.append(el('p', { className: 'muted', textContent: "Can't analyze this page." }))
+    return
+  }
+
   const status =
-    state.detection === 'agreement'
+    detect.source === 'agreement'
       ? 'Agreement checkbox detected — analyze the linked terms.'
-      : state.detection === 'page'
+      : detect.source === 'page'
         ? 'Terms of Service detected on this page.'
         : 'No terms detected — you can still analyze.'
-  const label = state.detection === 'agreement' ? 'Analyze linked terms' : 'Analyze this page'
+  const label = detect.source === 'agreement' ? 'Analyze linked terms' : 'Analyze full page'
   const btn = el('button', { className: 'btn-primary', textContent: label })
   btn.addEventListener('click', () => void runAnalyze())
   root.append(el('p', { className: 'status', textContent: status }), btn)
@@ -125,8 +133,13 @@ async function runAnalyze(): Promise<void> {
 
 async function init(): Promise<void> {
   const state = await send<AuthState>({ type: 'GET_AUTH_STATE' })
-  if (state.loggedIn) renderIdle(state)
-  else renderLoggedOut()
+  if (!state.loggedIn) {
+    renderLoggedOut()
+    return
+  }
+  // Detection is on-demand: injected into the active tab only now, on popup open.
+  const detect = await send<DetectResult>({ type: 'DETECT_ACTIVE_TAB' })
+  renderIdle(state.email, detect)
 }
 
 void init()

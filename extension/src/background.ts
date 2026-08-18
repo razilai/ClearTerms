@@ -6,25 +6,15 @@
 // state in module globals. Token, email, per-tab detection, and last result all
 // live in chrome.storage.local and are re-read on each message.
 
-import {
-  ANALYZE_PATH,
-  BACKEND_ORIGIN,
-  BADGE_COLOR,
-  BADGE_TEXT,
-  CACHE_EMAIL_KEY,
-  CACHE_TOKEN_KEY,
-} from './config'
+import { ANALYZE_PATH, BACKEND_ORIGIN, CACHE_EMAIL_KEY, CACHE_TOKEN_KEY } from './config'
 import type {
   AnalyzeResult,
   AuthState,
-  DetectionSource,
+  DetectResult,
   ErrorCode,
   Message,
   ScrapeResult,
 } from './types'
-
-// Per-tab detection source, keyed so a tab's badge state survives worker eviction.
-const detectedKey = (tabId: number) => `ct_detected_${tabId}`
 
 // --- storage helpers ------------------------------------------------------
 
@@ -44,33 +34,47 @@ async function setCached(token: string | null, email: string | null): Promise<vo
   }
 }
 
-// --- badge ----------------------------------------------------------------
+// --- on-demand injection --------------------------------------------------
 
-async function setBadge(tabId: number, source: DetectionSource | null): Promise<void> {
-  await chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR })
-  await chrome.action.setBadgeText({ tabId, text: source ? BADGE_TEXT : '' })
-  if (source) await chrome.storage.local.set({ [detectedKey(tabId)]: source })
-  else await chrome.storage.local.remove(detectedKey(tabId))
+// Inject the detector into the active tab. Idempotent — the content script's own
+// sentinel ignores a second injection. Returns false on restricted pages
+// (chrome://, Web Store, PDF viewer) where injection is not allowed.
+async function ensureDetector(tabId: number): Promise<boolean> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content-detector.js'],
+    })
+    return true
+  } catch {
+    return false
+  }
 }
 
-// Clear the badge/flag when a tab navigates away or closes.
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url) void setBadge(tabId, null)
-})
-chrome.tabs.onRemoved.addListener((tabId) => {
-  void chrome.storage.local.remove(detectedKey(tabId))
-})
+async function detectActiveTab(): Promise<DetectResult> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id || !(await ensureDetector(tab.id))) {
+    return { injectable: false, source: null }
+  }
+  try {
+    return await chrome.tabs.sendMessage<Message, DetectResult>(tab.id, {
+      type: 'DETECT_TOS',
+    })
+  } catch {
+    return { injectable: false, source: null }
+  }
+}
 
 // --- scrape (with injection fallback) -------------------------------------
 
 async function scrapeTab(tabId: number): Promise<ScrapeResult | null> {
+  await ensureDetector(tabId) // the detector is injected on demand, not static
   try {
-    // Fast path: the detector content script is already present.
     return await chrome.tabs.sendMessage<Message, ScrapeResult>(tabId, {
       type: 'SCRAPE_TOS',
     })
   } catch {
-    // Page predates install (no content script) — inject and grab body text.
+    // Detector unreachable (e.g. injection was blocked) — last-resort body text.
     try {
       const [res] = await chrome.scripting.executeScript({
         target: { tabId },
@@ -140,29 +144,23 @@ async function analyzeActiveTab(): Promise<AnalyzeResult> {
 
 async function getAuthState(): Promise<AuthState> {
   const { token, email } = await getCached()
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  let detection: DetectionSource | null = null
-  if (tab?.id) {
-    const got = await chrome.storage.local.get(detectedKey(tab.id))
-    detection = (got[detectedKey(tab.id)] as DetectionSource | undefined) ?? null
-  }
-  return { loggedIn: Boolean(token), email, detection }
+  return { loggedIn: Boolean(token), email }
 }
 
 // --- message router -------------------------------------------------------
 
-chrome.runtime.onMessage.addListener((msg: Message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
   switch (msg.type) {
     case 'AUTH_RELAY':
       void setCached(msg.token, msg.email)
       return // no response needed
 
-    case 'TOS_DETECTED':
-      if (sender.tab?.id) void setBadge(sender.tab.id, msg.source)
-      return
-
     case 'GET_AUTH_STATE':
       getAuthState().then(sendResponse)
+      return true // async response
+
+    case 'DETECT_ACTIVE_TAB':
+      detectActiveTab().then(sendResponse)
       return true // async response
 
     case 'ANALYZE_ACTIVE_TAB':
