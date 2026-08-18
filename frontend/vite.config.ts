@@ -11,6 +11,7 @@ const backendPrefixes = [
   '/analyses',
   '/history',
   '/preferences',
+  '/messages',
 ]
 
 // https://vite.dev/config/
