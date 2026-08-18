@@ -52,5 +52,8 @@ python_files = ["test_*.py"]
 pythonpath = ["."]
 # Tests needing a live Ollama are deselected by default: they take minutes.
 # Run them with `uv run pytest -m slow`.
-markers = ["slow: requires a live Ollama server"]
+markers = [
+    "slow: requires a live Ollama server",
+    "needs_ollama: drives the real agent via the light model; skipped when Ollama is unreachable",
+]
 addopts = "-m 'not slow'"

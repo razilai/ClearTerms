@@ -22,9 +22,6 @@ asserts against those cached results rather than paying for its own call.
 """
 
 import asyncio
-import json
-import urllib.error
-import urllib.request
 
 import pytest
 
@@ -33,24 +30,16 @@ from app.agent.classifier import classify_chunk
 from app.agent.evidence import is_verbatim
 from app.agent.output import ChunkClassification
 from app.core.config import settings
-
-
-def _ollama_has_model() -> bool:
-    """True if Ollama is up and settings.agent_model is pulled."""
-    try:
-        with urllib.request.urlopen(
-            f"{settings.ollama_base_url.rstrip('/')}/api/tags", timeout=3
-        ) as response:
-            tags = json.load(response)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return False
-    return any(m.get("name") == settings.agent_model for m in tags.get("models", []))
-
+from tests.conftest import ollama_has_model
 
 pytestmark = pytest.mark.slow
 
 
-if not _ollama_has_model():
+# Unlike the integration tier's light model, the slow tier probes the
+# production `settings.agent_model` and skips the whole module if it is not
+# pulled — every test here needs it, so a module-level skip is cleaner than a
+# per-test marker.
+if not ollama_has_model(settings.agent_model):
     pytest.skip(
         f"Ollama not reachable at {settings.ollama_base_url} "
         f"or model {settings.agent_model!r} not pulled",

@@ -2,18 +2,26 @@
 
 
 import httpx
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.db.repos import documents as documents_repo
+from app.models import Analysis
+from tests.conftest import signup_headers
 from tests.integration.factories import ANALYZE_BODY
 
 # --- analysis + history + preferences ---
 #
 # Run the whole pipeline (analyze -> cache -> verdict -> history) against the
 # real repos and a real agent. Per conftest's `light_agent` fixture the model is
-# a tiny one, so a live Ollama IS required (CI installs it and pulls the model);
-# scores are therefore nondeterministic, and the assertions below check shape,
-# not fixed values.
+# a tiny one; the tests that actually invoke it are marked `needs_ollama` and
+# skip when Ollama is unreachable (CI installs it and pulls the model), so a
+# teammate without Ollama still runs the rest of this module. Scores are
+# nondeterministic, so the assertions below check shape, not fixed values.
 
 
+@pytest.mark.needs_ollama
 async def test_analyze_returns_verdict_and_id(
     client: httpx.AsyncClient, auth_headers: dict
 ) -> None:
@@ -25,6 +33,7 @@ async def test_analyze_returns_verdict_and_id(
     assert isinstance(body["analysis_id"], int)
 
 
+@pytest.mark.needs_ollama
 async def test_analyze_is_cached_across_calls(
     client: httpx.AsyncClient, auth_headers: dict
 ) -> None:
@@ -37,11 +46,14 @@ async def test_analyze_is_cached_across_calls(
 async def test_analyze_too_large(
     client: httpx.AsyncClient, auth_headers: dict
 ) -> None:
-    big = {"text": "x" * 1_000_001, "url": None}
+    # One byte past the cap (ASCII, so chars == bytes). No agent runs: the byte
+    # check in api/analysis.py rejects it before the queue, so no Ollama needed.
+    big = {"text": "x" * (settings.max_analyze_bytes + 1), "url": None}
     resp = await client.post("/analyze", json=big, headers=auth_headers)
     assert resp.status_code == 413
 
 
+@pytest.mark.needs_ollama
 async def test_analysis_detail(client: httpx.AsyncClient, auth_headers: dict) -> None:
     analysis_id = (
         await client.post("/analyze", json=ANALYZE_BODY, headers=auth_headers)
@@ -65,6 +77,7 @@ async def test_analysis_detail_missing(
     assert resp.status_code == 404
 
 
+@pytest.mark.needs_ollama
 async def test_history_lists_analyzed_documents(
     client: httpx.AsyncClient, auth_headers: dict
 ) -> None:
@@ -85,6 +98,41 @@ async def test_history_empty_for_new_user(
 ) -> None:
     resp = await client.get("/history", headers=auth_headers)
     assert resp.json() == {"items": [], "next_cursor": None}
+
+
+async def test_history_rejects_malformed_cursor(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    """The shared cursor parser (PageParamsDep) rejects a hand-edited cursor
+    before the service runs — 400, not 500 — on /history as on the forum lists.
+    No agent involved."""
+    resp = await client.get("/history?cursor=not-a-cursor", headers=auth_headers)
+    assert resp.status_code == 400
+
+
+async def test_analysis_detail_is_not_user_scoped(
+    client: httpx.AsyncClient, auth_headers: dict, session: AsyncSession
+) -> None:
+    """`/analyses/{id}` is a per-document cache view, not per-user: any authed
+    user can read an analysis id, by design (auth alone gates the route). Seeded
+    directly so no agent runs."""
+    doc = await documents_repo.create(
+        session, "cross-user-hash", "https://ex.test/x", "normalized text"
+    )
+    session.add(
+        Analysis(
+            document_id=doc.id,
+            category="arbitration",
+            score=1,
+            model_version=settings.model_version,
+        )
+    )
+    await session.flush()
+
+    bob = await signup_headers(client, "bob@example.com")
+    resp = await client.get(f"/analyses/{doc.id}", headers=bob)
+    assert resp.status_code == 200
+    assert resp.json()["id"] == doc.id
 
 
 async def test_preferences_round_trip(
@@ -116,26 +164,3 @@ async def test_preferences_duplicate_category_rejected(
         "/preferences", json={"items": items}, headers=auth_headers
     )
     assert resp.status_code == 400
-
-
-# --- analysis pipeline through a live queue ---------------------------------
-
-
-async def test_analyze_runs_through_a_live_queue(
-    client: httpx.AsyncClient,
-    auth_headers: dict[str, str],
-) -> None:
-    # The `client` fixture starts the queue itself (bound to the same
-    # in-memory database the client's requests use); starting it again here
-    # against a different, file-backed factory would point the worker at a
-    # database the caller can't see its writes in.
-    resp = await client.post(
-        "/analyze",
-        json={"text": "You waive all rights. We may share your data.", "url": None},
-        headers=auth_headers,
-    )
-
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["verdict"] in {"up", "down"}
-    assert isinstance(body["analysis_id"], int)

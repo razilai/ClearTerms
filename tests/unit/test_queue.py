@@ -606,6 +606,18 @@ async def test_a_fresh_users_rejected_submission_leaves_no_stray_key(
 # Document get-or-create is not tested here: analyze_document_job calls
 # documents_repo.create directly, whose ON CONFLICT DO NOTHING + re-read is
 # covered by test_create_document_duplicate_hash_returns_existing above.
+#
+# These drive the pipeline through run_analysis, which calls the agent. The
+# agent's output is irrelevant to what they assert (write ordering; the
+# get-or-create race), so it is stubbed to an empty score list — save_analyses
+# short-circuits on [] — keeping the unit tier off Ollama, as the rest of it is.
+
+
+async def _stub_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _no_scores(text: str) -> list:
+        return []
+
+    monkeypatch.setattr("app.agent.classifier.analyze", _no_scores)
 
 
 async def test_analyze_issues_no_write_before_submitting(
@@ -627,6 +639,7 @@ async def test_analyze_issues_no_write_before_submitting(
     from app.services import analysis as analysis_service
     from app.services.queue import AnalysisQueue
 
+    await _stub_agent(monkeypatch)
     q = AnalysisQueue()
     await q.start(file_session_factory, workers=1)
     statements: list[str] = []
@@ -679,6 +692,7 @@ async def test_analyze_issues_no_write_before_submitting(
 
 async def test_concurrent_jobs_for_the_same_text_share_one_document(
     file_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The get-or-create race: both jobs must land on one document row.
 
@@ -690,6 +704,8 @@ async def test_concurrent_jobs_for_the_same_text_share_one_document(
     what production does.
     """
     from app.services.analysis import analyze_document_job
+
+    await _stub_agent(monkeypatch)
 
     async def run_job() -> int:
         async with file_session_factory() as session:

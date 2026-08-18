@@ -25,7 +25,11 @@ which is why the teardown is in a `finally`.
 """
 
 import asyncio
+import functools
+import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import AsyncIterator, Iterator
 
@@ -52,7 +56,7 @@ from app.main import app
 from app.models import Base
 
 # Every tier hits a real agent — no fakes — against a tiny instruct model, so a
-# full run stays under a minute. The `slow` tier (tests/system.py) runs against
+# full run stays under a minute. The `slow` tier (tests/system/) runs against
 # settings.agent_model directly (rather than this override) to prove whatever the
 # configured production model is still works end to end. Override with
 # CLEARTERMS_TEST_AGENT_MODEL if you prefer another small model you already have
@@ -83,6 +87,44 @@ def light_agent(request: pytest.FixtureRequest) -> Iterator[None]:
         settings.agent_model = original_model
         settings.model_version = original_version
         classifier.build_agent.cache_clear()
+
+
+@functools.cache
+def ollama_has_model(model: str) -> bool:
+    """True if Ollama is up and ``model`` is pulled. Cached per model name.
+
+    Shared by the integration analysis tests (which drive the light model
+    end to end) and the system tier. Both hit a real Ollama; when it is not
+    reachable those tests must *skip*, not fail, so a teammate without Ollama
+    can still run the rest of the suite green.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"{settings.ollama_base_url.rstrip('/')}/api/tags", timeout=3
+        ) as response:
+            tags = json.load(response)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
+    return any(m.get("name") == model for m in tags.get("models", []))
+
+
+@pytest.fixture(autouse=True)
+def _skip_without_ollama(request: pytest.FixtureRequest) -> None:
+    """Skip a ``needs_ollama``-marked test when the light model is unavailable.
+
+    Marked tests exercise the real agent through the light model; unmarked
+    tests (the bulk of the suite) never touch Ollama, so this is a no-op for
+    them. The reachability probe is cached, so a marked-heavy run pays for it
+    once. ``slow`` tests do their own module-level probe against the production
+    model instead and are excluded here.
+    """
+    if request.node.get_closest_marker("needs_ollama") and not ollama_has_model(
+        LIGHT_MODEL
+    ):
+        pytest.skip(
+            f"Ollama not reachable at {settings.ollama_base_url} "
+            f"or light model {LIGHT_MODEL!r} not pulled"
+        )
 
 
 @pytest.fixture(scope="session")
