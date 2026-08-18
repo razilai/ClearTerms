@@ -4,6 +4,16 @@
 
 import { clearAuth, getToken } from '../auth/storage'
 
+// Every backend call is namespaced under /api so no API route can collide with
+// an SPA route. Without it /forum, /history and /analyze are both pages and
+// endpoints, and a refresh (a plain GET the server must answer) is
+// indistinguishable from an API call — the proxy sent it to the backend and the
+// browser rendered raw JSON. Callers still pass backend-relative paths
+// ('/forum/posts'); the prefix is added here and stripped again by the proxy
+// (vite.config.ts in dev, frontend/nginx.conf in docker), so the backend keeps
+// its own unprefixed routes.
+const API_BASE = '/api'
+
 export class ApiError extends Error {
   status: number
 
@@ -43,7 +53,7 @@ export async function request<T>(
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  const res = await fetch(path, { ...options, headers })
+  const res = await fetch(API_BASE + path, { ...options, headers })
 
   if (!res.ok) {
     // Expired/invalid token: drop credentials and send the user to /login.

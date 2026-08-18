@@ -173,8 +173,13 @@ does **not exist yet** (see stubbed list below).
   lists were converted. `/messages` is layout only (no DM backend).
   Session = JWT + email in localStorage (no `/me` endpoint; ownership
   UI compares `author_email` to the stored email — server still enforces via 403).
-  Vite dev server proxies `/auth`, `/forum`, `/analyze`, `/analyses`, `/history`,
-  `/preferences` to `:8000`; no CORS configured on the backend (deliberate — revisit
+  Backend calls are namespaced under **`/api`**, added in `api/client.ts::request`
+  and stripped again by the proxy (`vite.config.ts` in dev, `frontend/nginx.conf`
+  in docker) — the backend itself stays unprefixed. The namespace is what keeps
+  API paths from shadowing SPA routes: `/forum`, `/history` and `/analyze` are
+  both pages and endpoints, and a refresh is a plain GET the proxy cannot tell
+  apart from an API call, so it used to answer raw JSON. Callers still pass
+  backend-relative paths. No CORS configured on the backend (deliberate — revisit
   at deployment). Vote state (`like_count`, `dislike_count`, `my_vote`) ships on
   every post and comment read, so buttons render pressed-state on first paint.
 
@@ -225,7 +230,7 @@ under `python_files` or pytest skips them. `asyncio_mode = "auto"`.
 ```bash
 cd frontend
 npm install
-npm run dev        # http://localhost:5173, proxies /auth + /forum to :8000
+npm run dev        # http://localhost:5173, proxies /api/* to :8000 (prefix stripped)
 npm run build      # tsc -b && vite build — this is the typecheck gate
 npm run lint       # oxlint
 ```
