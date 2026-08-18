@@ -33,6 +33,7 @@ import {
   startConversation,
   unreadKey,
 } from '../api/messages'
+import { ApiError } from '../api/client'
 import type { MessageOut } from '../api/types'
 import { useAuth } from '../auth/useAuth'
 import { AttachmentGrid } from '../components/AttachmentGrid'
@@ -340,18 +341,30 @@ function Thread({ conversationId }: { conversationId: number }) {
 
 function NewConversation({ onOpened }: { onOpened: (id: number) => void }) {
   const [recipient, setRecipient] = useState('')
+  const [recipientError, setRecipientError] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   const start = useMutation({
     mutationFn: () => startConversation(recipient.trim()),
     onSuccess: (conversation) => {
       setRecipient('')
+      setRecipientError(null)
       // Idempotent server-side, so this may be an existing thread; refresh the
       // list either way in case it is genuinely new.
       queryClient.invalidateQueries({ queryKey: conversationsKey })
       onOpened(conversation.id)
     },
-    onError: showError,
+    onError: (err) => {
+      // Starting a conversation is the only request in this component where a
+      // 404 means the typed recipient has no account. Keep that actionable
+      // feedback beside the field instead of exposing the API's bare "user"
+      // detail in a transient notification.
+      if (err instanceof ApiError && err.status === 404) {
+        setRecipientError('User invalid')
+        return
+      }
+      showError(err)
+    },
   })
 
   return (
@@ -362,7 +375,11 @@ function NewConversation({ onOpened }: { onOpened: (id: number) => void }) {
         label="New message"
         placeholder="their@email.com"
         value={recipient}
-        onChange={(event) => setRecipient(event.currentTarget.value)}
+        error={recipientError}
+        onChange={(event) => {
+          setRecipient(event.currentTarget.value)
+          if (recipientError) setRecipientError(null)
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && recipient.trim()) start.mutate()
         }}

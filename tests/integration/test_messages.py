@@ -81,6 +81,22 @@ async def test_dm_start_is_idempotent_and_rejects_self_or_unknown_user(
     assert unknown_response.status_code == 404
 
 
+async def test_dm_cannot_create_a_phantom_thread_for_an_unknown_recipient(
+    client: httpx.AsyncClient, auth_headers: dict
+) -> None:
+    """Only registered users may become the other participant in a DM."""
+    response = await client.post(
+        "/messages/conversations",
+        json={"recipient_email": "nobody@example.com"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404
+    inbox = await client.get("/messages/conversations", headers=auth_headers)
+    assert inbox.status_code == 200
+    assert inbox.json()["items"] == []
+
+
 async def test_dm_non_participant_cannot_discover_a_conversation(
     client: httpx.AsyncClient, auth_headers: dict
 ) -> None:

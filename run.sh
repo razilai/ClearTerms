@@ -10,10 +10,94 @@
 set -e
 cd "$(dirname "$0")"
 
+# Docker Compose expands every service in docker-compose.yml, even when dev mode
+# starts only db and minio. The repo-root .env is ignored by Git and Compose
+# reads it automatically. Dev mode creates secure, per-checkout values there so
+# a fresh clone starts without manual secret setup.
+compose_secret_is_set() {
+    local name="$1" value
+
+    # An explicitly exported value takes precedence over .env, just as it does
+    # for Docker Compose. An empty exported value is therefore still invalid.
+    if [[ -v "$name" ]]; then
+        [[ -n "${!name}" ]]
+        return
+    fi
+
+    [[ -f .env ]] || return 1
+    value="$(sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*//p" .env | tail -n 1)"
+    value="${value%$'\r'}"
+    [[ -n "$value" && "$value" != '""' && "$value" != "''" ]]
+}
+
+check_compose_secrets() {
+    local required=(CLEARTERMS_JWT_SECRET POSTGRES_PASSWORD MINIO_ROOT_PASSWORD)
+    local missing=() name
+
+    for name in "${required[@]}"; do
+        compose_secret_is_set "$name" || missing+=("$name")
+    done
+
+    if ((${#missing[@]})); then
+        printf 'Missing Docker Compose secret(s): %s\n' "${missing[*]}" >&2
+        printf 'Create the repo-root .env from .env.example, then set those values.\n' >&2
+        printf '  cp -n .env.example .env\n' >&2
+        printf 'Generate each secret with: openssl rand -hex 32\n' >&2
+        return 1
+    fi
+}
+
+set_compose_secret() {
+    local name="$1" value="$2"
+
+    # Replace an empty entry copied from .env.example. Values generated here are
+    # hexadecimal, so they are safe to interpolate into this expression.
+    if grep -qE "^[[:space:]]*${name}[[:space:]]*=" .env; then
+        sed -i -E "s|^([[:space:]]*${name}[[:space:]]*=).*|\\1${value}|" .env
+    else
+        printf '%s=%s\n' "$name" "$value" >> .env
+    fi
+}
+
+ensure_dev_compose_secrets() {
+    local required=(CLEARTERMS_JWT_SECRET POSTGRES_PASSWORD MINIO_ROOT_PASSWORD)
+    local name value created=0
+
+    if [[ ! -f .env ]]; then
+        cp .env.example .env
+        created=1
+    fi
+
+    # Local secrets should not be readable by other users on the development
+    # machine. This does not affect a caller-provided environment variable.
+    chmod 600 .env
+
+    for name in "${required[@]}"; do
+        # Compose gives an exported variable precedence over .env. Do not
+        # silently generate a value that Compose would then ignore.
+        if [[ -v "$name" && -z "${!name}" ]]; then
+            printf 'Unset empty exported %s so dev mode can use .env.\n' "$name" >&2
+            return 1
+        fi
+
+        if ! compose_secret_is_set "$name"; then
+            value="$(openssl rand -hex 32)"
+            set_compose_secret "$name" "$value"
+            printf 'Generated development-only %s in .env.\n' "$name"
+        fi
+    done
+
+    if ((created)); then
+        printf 'Created .env with development-only Docker credentials.\n'
+    fi
+}
+
 mode="${1:-dev}"
 
 case "$mode" in
 docker)
+    check_compose_secrets
+
     # Free ports first: dev mode leaves db/minio containers running detached, and
     # they bind the same ports the full graph wants (5432, 9000/9001). Tear them
     # down so the up below doesn't hit "address already in use".
@@ -26,6 +110,8 @@ docker)
     ;;
 
 dev)
+    ensure_dev_compose_secrets
+
     trap 'kill 0' EXIT
 
     # The LLM backend is chosen in backend/.env (CLEARTERMS_LLM_PROVIDER). With
