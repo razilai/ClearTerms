@@ -20,6 +20,7 @@ from app.agent.categories import SCORE_AGGRESSIVE, SCORE_STANDARD
 from app.core.config import settings
 from app.core.logging import JsonFormatter, setup_logging
 from app.db.repos import documents, history, preferences, users
+from app.db.repos import messages as messages_repo
 from app.db.repos import rate_limit as rate_limit_repo
 from app.models import Analysis, Document, Finding, Preference, RateLimit, User
 from app.schemas.preferences import PreferenceItem
@@ -1601,3 +1602,175 @@ def test_setup_logging_folds_uvicorn_loggers_into_root() -> None:
         lg = logging.getLogger(name)
         assert lg.handlers == []
         assert lg.propagate is True
+
+
+# --- messages repo ----------------------------------------------------------
+
+
+async def _two_users(session: AsyncSession) -> tuple[int, int]:
+    ada = await users.create(session, "ada@example.com", "pw")
+    bob = await users.create(session, "bob@example.com", "pw")
+    return ada.id, bob.id
+
+
+def test_participant_pair_is_canonical() -> None:
+    assert messages_repo.participant_pair(5, 3) == (3, 5)
+    assert messages_repo.participant_pair(3, 5) == (3, 5)
+
+
+async def test_get_or_create_conversation_is_order_independent(
+    session: AsyncSession,
+) -> None:
+    a, b = await _two_users(session)
+
+    first = await messages_repo.get_or_create(session, a, b)
+    assert first.id is not None, "flush should populate the PK"
+    assert (first.user_a_id, first.user_b_id) == (min(a, b), max(a, b))
+
+    # Reversed arguments must find the same row, not open a second thread.
+    again = await messages_repo.get_or_create(session, b, a)
+    assert again.id == first.id
+    assert await messages_repo.get_by_participants(session, b, a) is not None
+
+
+async def test_self_conversation_violates_check_constraint(
+    session: AsyncSession,
+) -> None:
+    """ck_conversations_user_order is strict (<), so a pair with itself fails."""
+    a, _ = await _two_users(session)
+
+    with pytest.raises(IntegrityError):
+        await messages_repo.get_or_create(session, a, a)
+
+
+async def test_list_conversations_covers_both_participant_columns(
+    session: AsyncSession,
+) -> None:
+    """The viewer is user_a in some threads and user_b in others; the inbox has
+    to return both, newest activity first."""
+    a, b = await _two_users(session)
+    c = (await users.create(session, "cy@example.com", "pw")).id
+    ab = await messages_repo.get_or_create(session, a, b)
+    ac = await messages_repo.get_or_create(session, a, c)
+
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    await messages_repo.touch(session, ab.id, base)
+    await messages_repo.touch(session, ac.id, base + timedelta(minutes=5))
+
+    assert [conv.id for conv in await messages_repo.list_for_user(session, a, 10)] == [
+        ac.id,
+        ab.id,
+    ]
+    # b is in exactly one of them and must not see the other.
+    assert [conv.id for conv in await messages_repo.list_for_user(session, b, 10)] == [
+        ab.id
+    ]
+
+
+async def test_list_conversations_keyset_pages(session: AsyncSession) -> None:
+    a, b = await _two_users(session)
+    c = (await users.create(session, "cy@example.com", "pw")).id
+    ab = await messages_repo.get_or_create(session, a, b)
+    ac = await messages_repo.get_or_create(session, a, c)
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    await messages_repo.touch(session, ab.id, base)
+    await messages_repo.touch(session, ac.id, base + timedelta(minutes=5))
+
+    page = await messages_repo.list_for_user(session, a, limit=1)
+    assert len(page) == 2, "over-fetches limit + 1 so the caller can detect a page"
+
+    first = page[0]
+    following = await messages_repo.list_for_user(
+        session, a, limit=1, cursor=(first.last_message_at, first.id)
+    )
+    assert [conv.id for conv in following] == [ab.id]
+
+
+async def test_list_messages_newest_first_and_pages(session: AsyncSession) -> None:
+    a, b = await _two_users(session)
+    conv = await messages_repo.get_or_create(session, a, b)
+    sent = [
+        await messages_repo.create_message(session, conv.id, a, f"m{i}")
+        for i in range(3)
+    ]
+    # created_at is a server default at whole-second resolution, so set it
+    # explicitly rather than let three messages in one test share a timestamp.
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    for i, message in enumerate(sent):
+        message.created_at = base + timedelta(minutes=i)
+    await session.flush()
+
+    assert [m.body for m in await messages_repo.list_messages(session, conv.id, 10)] == [
+        "m2",
+        "m1",
+        "m0",
+    ]
+
+    page = await messages_repo.list_messages(session, conv.id, limit=2)
+    assert len(page) == 3, "over-fetches limit + 1"
+    last = page[1]
+    following = await messages_repo.list_messages(
+        session, conv.id, limit=2, cursor=(last.created_at, last.id)
+    )
+    assert [m.body for m in following] == ["m0"]
+
+
+async def test_latest_by_conversation_maps_newest_message(
+    session: AsyncSession,
+) -> None:
+    a, b = await _two_users(session)
+    c = (await users.create(session, "cy@example.com", "pw")).id
+    ab = await messages_repo.get_or_create(session, a, b)
+    ac = await messages_repo.get_or_create(session, a, c)
+    empty = await messages_repo.get_or_create(session, b, c)
+
+    older = await messages_repo.create_message(session, ab.id, a, "older")
+    newest = await messages_repo.create_message(session, ab.id, b, "newest")
+    only = await messages_repo.create_message(session, ac.id, a, "only")
+    base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    older.created_at = base
+    newest.created_at = base + timedelta(minutes=1)
+    only.created_at = base
+    await session.flush()
+
+    latest = await messages_repo.latest_by_conversation(
+        session, [ab.id, ac.id, empty.id]
+    )
+    assert latest[ab.id].body == "newest"
+    assert latest[ac.id].body == "only"
+    assert empty.id not in latest, "a thread with no messages has no preview"
+    assert await messages_repo.latest_by_conversation(session, []) == {}
+
+
+async def test_unread_counts_and_mark_read(session: AsyncSession) -> None:
+    a, b = await _two_users(session)
+    conv = await messages_repo.get_or_create(session, a, b)
+    await messages_repo.create_message(session, conv.id, a, "from a 1")
+    await messages_repo.create_message(session, conv.id, a, "from a 2")
+    await messages_repo.create_message(session, conv.id, b, "from b")
+
+    # Your own messages are never unread for you.
+    assert await messages_repo.count_unread(session, b, [conv.id]) == {conv.id: 2}
+    assert await messages_repo.count_unread(session, a, [conv.id]) == {conv.id: 1}
+    assert await messages_repo.count_unread_total(session, b) == 2
+    assert await messages_repo.count_unread(session, a, []) == {}
+
+    when = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert await messages_repo.mark_read(session, conv.id, b, when) == 2
+    assert await messages_repo.count_unread(session, b, [conv.id]) == {}
+    assert await messages_repo.count_unread_total(session, b) == 0
+    # b reading its side leaves a's own unread message alone.
+    assert await messages_repo.count_unread_total(session, a) == 1
+    # Idempotent: reopening the thread rewrites nothing.
+    assert await messages_repo.mark_read(session, conv.id, b, when) == 0
+
+
+async def test_unread_total_ignores_other_users_conversations(
+    session: AsyncSession,
+) -> None:
+    a, b = await _two_users(session)
+    c = (await users.create(session, "cy@example.com", "pw")).id
+    others = await messages_repo.get_or_create(session, b, c)
+    await messages_repo.create_message(session, others.id, b, "not for a")
+
+    assert await messages_repo.count_unread_total(session, a) == 0
