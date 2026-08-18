@@ -29,22 +29,16 @@ import classes from './AnalyzePage.module.css'
 export function AnalyzePage() {
   const queryClient = useQueryClient()
   const [result, setResult] = useState<VerdictResponse | null>(null)
+  // Characters the last edit tried to add past the cap. Recomputed on every
+  // change, so it clears itself as soon as the user types again.
+  const [dropped, setDropped] = useState(0)
 
   const form = useForm({
     initialValues: { text: '', url: '' },
     validate: {
-      // No maxLength on the input itself: Mantine would silently drop the tail
-      // of a paste, and a quietly truncated document yields a confident verdict
-      // on terms the user never submitted. Block the submit instead and say by
-      // how much, so the trimming is theirs to do.
-      text: (v) => {
-        if (v.trim().length === 0) return 'Paste the terms to analyze'
-        if (v.length > MAX_ANALYZE_CHARS) {
-          const over = (v.length - MAX_ANALYZE_CHARS).toLocaleString()
-          return `Too long by ${over} characters — trim it and analyze the rest`
-        }
-        return null
-      },
+      // Length is enforced by clipping in the textarea's onChange below, so
+      // emptiness is all that is left to validate here.
+      text: (v) => (v.trim().length === 0 ? 'Paste the terms to analyze' : null),
       url: (v) => {
         if (!v.trim()) return null
         try {
@@ -100,8 +94,27 @@ export function AnalyzePage() {
           disabled={mutation.isPending}
           classNames={{ input: classes.pasteArea }}
           {...form.getInputProps('text')}
+          // Clipped here rather than with maxLength: the browser applies
+          // maxLength before React sees the paste, so the overflow becomes
+          // unmeasurable — i.e. silent — and a quietly truncated document
+          // yields a confident verdict on terms the user never submitted.
+          // Clipping in onChange caps the value the same way but keeps the
+          // dropped count, which the alert below reports.
+          onChange={(e) => {
+            const next = e.currentTarget.value
+            const clipped = next.slice(0, MAX_ANALYZE_CHARS)
+            setDropped(next.length - clipped.length)
+            form.setFieldValue('text', clipped)
+          }}
         />
         <CharCount value={form.values.text} max={MAX_ANALYZE_CHARS} showFrom={0} />
+        {dropped > 0 && (
+          <Alert color="yellow" mt="sm">
+            Cut {dropped.toLocaleString()} characters at the{' '}
+            {MAX_ANALYZE_CHARS.toLocaleString()}-character limit. Only the text above will
+            be analyzed.
+          </Alert>
+        )}
         <TextInput
           label="Source URL"
           description="Optional — where this document lives"
@@ -116,9 +129,8 @@ export function AnalyzePage() {
           <span className={classes.statusLine}>
             {mutation.isPending ? 'Reading the document…' : ''}
           </span>
-          {/* Left enabled on purpose: submitting is how the user gets the
-              validation message naming how far over they are. A disabled
-              button would show the red counter and explain nothing. */}
+          {/* Left enabled on purpose: submitting is how an empty box gets its
+              validation message. A disabled button would explain nothing. */}
           <Button type="submit" loading={mutation.isPending}>
             Analyze document
           </Button>

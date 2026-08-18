@@ -16,8 +16,9 @@ type Props = {
  * Right-aligned "used / limit" line for a text input.
  *
  * Display only — it never trims the value. Enforcement is the input's own
- * maxLength (where silent truncation is harmless) or a form validator (where it
- * isn't); either way the server has the last word.
+ * maxLength (where silent truncation is harmless) or an onChange that clips and
+ * reports what it cut (where it isn't — the analyze paste box); either way the
+ * server has the last word.
  */
 export function CharCount({ value, max, showFrom = 0.8 }: Props) {
   const used = value.length

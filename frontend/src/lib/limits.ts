@@ -14,5 +14,6 @@ export const MAX_URL_CHARS = 2_048
 // paste box in bytes and answers 413. The two are the same number for ASCII,
 // which is what nearly every TOS is; for a multibyte document this counter can
 // read under the limit while the server still refuses it, and that 413 is the
-// backstop. Deliberately not enforced by truncation — see AnalyzePage.
+// backstop. Enforced by clipping in AnalyzePage's onChange — never by
+// maxLength, which would drop the tail of a paste silently.
 export const MAX_ANALYZE_CHARS = 1_000_000

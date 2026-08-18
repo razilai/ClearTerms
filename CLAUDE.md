@@ -289,6 +289,8 @@ use testcontainers.
   CPU-burn the cap exists to stop), and answers 401 rather than 422. The analyze
   paste box is bounded in *bytes* by `max_analyze_bytes` in `api/analysis.py`
   (413), not by a schema `max_length`; the frontend never sets `maxLength` on it
-  — silent truncation of a pasted TOS would yield a confident verdict on a
-  document the user never submitted, so it shows a `CharCount` and blocks submit
-  with a validator instead.
+  — the browser applies `maxLength` before React sees the paste, and silent
+  truncation of a pasted TOS would yield a confident verdict on a document the
+  user never submitted. `AnalyzePage` instead clips in `onChange`, which caps the
+  value identically but keeps the dropped count, shown in an alert under the
+  always-visible `CharCount`.
