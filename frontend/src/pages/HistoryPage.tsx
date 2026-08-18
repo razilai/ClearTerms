@@ -6,14 +6,20 @@ import {
   Group,
   Loader,
   Paper,
+  Progress,
   Stack,
   Text,
 } from '@mantine/core'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useMutationState,
+  useQuery,
+} from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { isNotReady } from '../api/client'
 import { getHistory } from '../api/history'
+import type { AnalyzeRequest } from '../api/types'
 import { BackendNotReady } from '../components/BackendNotReady'
 import { PageHeader } from '../components/PageHeader'
 import { Pager } from '../components/Pager'
@@ -32,6 +38,14 @@ export function HistoryPage() {
     placeholderData: keepPreviousData,
   })
   const entries = data?.items ?? []
+  // Analyses fired from AnalyzePage but still in flight. The mutation cache is
+  // global to the QueryClient, so these survive navigating here from /analyze;
+  // each resolves via invalidateQueries(['history']), which drops it from
+  // 'pending' and swaps the placeholder below for the real row.
+  const pending = useMutationState({
+    filters: { mutationKey: ['analyze'], status: 'pending' },
+    select: (m) => m.state.variables as AnalyzeRequest,
+  })
 
   if (isPending) {
     return (
@@ -62,7 +76,7 @@ export function HistoryPage() {
         title="History"
         description="Every terms-of-service document you've had reviewed."
       />
-      {entries.length === 0 ? (
+      {entries.length === 0 && pending.length === 0 ? (
         <Stack align="center" mt="xl" gap="sm">
           <Text c="ink.6">No documents reviewed yet.</Text>
           <Button component={Link} to="/analyze" variant="light">
@@ -71,6 +85,21 @@ export function HistoryPage() {
         </Stack>
       ) : (
         <Stack gap="xs">
+          {pending.map((vars, i) => (
+            <Paper key={`pending-${i}`} withBorder p="md">
+              <Group wrap="nowrap" justify="space-between">
+                <Group wrap="nowrap" gap="md" style={{ minWidth: 0 }}>
+                  <Text size="xs" c="ink.6" ff="monospace">
+                    Analyzing…
+                  </Text>
+                  <Text size="sm" fw={500} truncate>
+                    {vars?.url ?? 'Pasted text'}
+                  </Text>
+                </Group>
+                <Progress value={100} animated w={120} color="redline" />
+              </Group>
+            </Paper>
+          ))}
           {entries.map((entry) => (
             <Paper
               key={entry.document_id}

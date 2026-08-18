@@ -1,7 +1,7 @@
 import { Group, Text } from '@mantine/core'
 
 import type { CategoryScore } from '../api/types'
-import { clampScore, labelFor, SCORE_MAX } from '../lib/categories'
+import { labelFor, stoplightFor } from '../lib/categories'
 import classes from './ScoreMark.module.css'
 
 interface Props {
@@ -9,11 +9,10 @@ interface Props {
   index: number
 }
 
-// One clause row: § index, category label, then the redline mark — an intact
-// rule for a clean clause, a strike sized by severity for a flagged one.
+// One clause row: § index, category label, then a stoplight light — green when
+// the clause is clear, yellow for standard terms, red for aggressive ones.
 export function ScoreMark({ entry, index }: Props) {
-  const score = clampScore(entry.score)
-  const flagged = score > 0
+  const light = stoplightFor(entry.score)
 
   return (
     <div className={classes.row}>
@@ -22,28 +21,18 @@ export function ScoreMark({ entry, index }: Props) {
         <Text className={classes.label} size="sm">
           {labelFor(entry.category)}
         </Text>
-        <div className={classes.track}>
-          {flagged ? (
-            <div
-              className={classes.strike}
-              style={{
-                width: `${(score / SCORE_MAX) * 100}%`,
-                height: 2 + score * 2,
-              }}
-            />
-          ) : (
-            <div className={classes.clean} />
-          )}
-        </div>
-        {flagged ? (
-          <span className={classes.score}>
-            {entry.score}/{SCORE_MAX}
-          </span>
-        ) : (
-          <Text className={classes.score} c="ok.6" size="xs">
-            clear
+        <div className={classes.track} />
+        <Group gap="xs" wrap="nowrap" className={classes.light}>
+          <span
+            className={classes.dot}
+            style={{ backgroundColor: `var(--mantine-color-${light.color}-6)` }}
+            role="img"
+            aria-label={light.label}
+          />
+          <Text size="xs" c={`${light.color}.7`}>
+            {light.label}
           </Text>
-        )}
+        </Group>
       </Group>
       {entry.findings.length > 0 && (
         <div className={classes.findings}>

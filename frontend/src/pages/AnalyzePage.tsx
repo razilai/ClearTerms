@@ -52,6 +52,9 @@ export function AnalyzePage() {
   })
 
   const mutation = useMutation({
+    // Keyed so HistoryPage can observe the in-flight analysis via
+    // useMutationState and render a pending row while it runs.
+    mutationKey: ['analyze'],
     mutationFn: analyze,
     onSuccess: (res) => {
       setResult(res)

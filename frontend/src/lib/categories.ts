@@ -48,12 +48,21 @@ export function labelFor(slug: string): string {
 }
 
 // Score scale: backend/app/agent/categories.py defines a 0-2 scale
-// (SCORE_ABSENT..SCORE_AGGRESSIVE). Clamp so an out-of-range score can never
-// break the mark rendering.
+// (SCORE_ABSENT..SCORE_AGGRESSIVE). Rendered as a stoplight: green when the
+// category is absent, yellow for standard terms, red for aggressive ones.
 export const SCORE_MAX = 2
 
-export function clampScore(score: number): number {
-  return Math.max(0, Math.min(SCORE_MAX, score))
+// Mantine color key + label word for each score. Clamp so an out-of-range
+// score can never break the mark rendering (unknown scores land on red).
+const STOPLIGHT: Record<number, { color: string; label: string }> = {
+  0: { color: 'ok', label: 'Clear' },
+  1: { color: 'highlight', label: 'Standard' },
+  2: { color: 'redline', label: 'Aggressive' },
+}
+
+export function stoplightFor(score: number): { color: string; label: string } {
+  const clamped = Math.max(0, Math.min(SCORE_MAX, Math.round(score)))
+  return STOPLIGHT[clamped]
 }
 
 // Preferences are a binary checklist (backend/app/schemas/preferences.py).
