@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     max_post_title_chars: int = 255  # mirrors Post.title's VARCHAR(255)
     max_post_body_chars: int = 10_000
     max_comment_body_chars: int = 5_000
+    max_message_body_chars: int = 5_000
     max_url_chars: int = 2_048  # de-facto browser/CDN URL ceiling
 
     # Concurrent analyses. One LLM generation already saturates a laptop CPU;
