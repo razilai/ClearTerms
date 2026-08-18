@@ -35,7 +35,9 @@ import {
 } from '../api/messages'
 import type { MessageOut } from '../api/types'
 import { useAuth } from '../auth/useAuth'
+import { AttachmentGrid } from '../components/AttachmentGrid'
 import { CharCount } from '../components/CharCount'
+import { MediaDropzone } from '../components/MediaDropzone'
 import { PageHeader } from '../components/PageHeader'
 import { Pager } from '../components/Pager'
 import { MAX_MESSAGE_BODY_CHARS } from '../lib/limits'
@@ -135,6 +137,12 @@ function Thread({ conversationId }: { conversationId: number }) {
   const { email } = useAuth()
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState('')
+  // State rather than a ref (the forum uses a ref): here the Send button has to
+  // re-enable when attachments arrive, because a picture with no caption is a
+  // valid message. MediaDropzone only fires onChange from event handlers, so
+  // setting state from it cannot loop.
+  const [attachmentIds, setAttachmentIds] = useState<number[]>([])
+  const [dropzoneKey, setDropzoneKey] = useState(0)
   // Pages fetched by "Load older", oldest-first once reversed for display.
   const [older, setOlder] = useState<MessageOut[]>([])
   const [olderCursor, setOlderCursor] = useState<string | null>(null)
@@ -151,6 +159,10 @@ function Thread({ conversationId }: { conversationId: number }) {
     setOlder([])
     setOlderCursor(null)
     setDraft('')
+    // Switching threads must drop staged attachments too, or they would be
+    // claimed by the next message in a different conversation.
+    setAttachmentIds([])
+    setDropzoneKey((k) => k + 1)
   }, [conversationId])
 
   useEffect(() => {
@@ -173,9 +185,14 @@ function Thread({ conversationId }: { conversationId: number }) {
   }, [data, markThreadRead])
 
   const send = useMutation({
-    mutationFn: (body: string) => sendMessage(conversationId, body),
+    mutationFn: (body: string) =>
+      sendMessage(conversationId, body, attachmentIds),
     onSuccess: () => {
       setDraft('')
+      // Remount the dropzone so the just-claimed attachments clear: an id can
+      // only be claimed once, so re-sending them would 404.
+      setAttachmentIds([])
+      setDropzoneKey((k) => k + 1)
       queryClient.invalidateQueries({ queryKey: threadKey })
       queryClient.invalidateQueries({ queryKey: conversationsKey })
     },
@@ -206,6 +223,8 @@ function Thread({ conversationId }: { conversationId: number }) {
   // bottom-new the way a conversation is actually read.
   const messages = [...data.messages, ...older].reverse()
   const tooLong = draft.length > MAX_MESSAGE_BODY_CHARS
+  // An attachment with no caption is a message; empty text alone is not.
+  const canSend = Boolean(draft.trim()) || attachmentIds.length > 0
 
   return (
     <Stack h="100%" gap="sm">
@@ -255,9 +274,12 @@ function Thread({ conversationId }: { conversationId: number }) {
                   })}
                 </Text>
               </Group>
-              <Text size="sm" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
-                {message.body}
-              </Text>
+              {message.body && (
+                <Text size="sm" mt={6} style={{ whiteSpace: 'pre-wrap' }}>
+                  {message.body}
+                </Text>
+              )}
+              <AttachmentGrid attachments={message.attachments} />
               {/* Own messages only: read_at answers "have they seen it yet?".
                   On one you received it is always set by the time you could
                   look — opening the thread is what sets it. */}
@@ -294,9 +316,17 @@ function Thread({ conversationId }: { conversationId: number }) {
           onChange={(event) => setDraft(event.currentTarget.value)}
         />
         <CharCount value={draft} max={MAX_MESSAGE_BODY_CHARS} />
+        {/* Same pre-upload flow as the forum: files upload on drop and the
+            ready ids ride along with the send. Size/type limits are enforced
+            server-side by media.validate_upload. */}
+        <MediaDropzone
+          key={dropzoneKey}
+          onChange={setAttachmentIds}
+          disabled={send.isPending}
+        />
         <Group justify="flex-end" mt="xs">
           <Button
-            disabled={!draft.trim() || tooLong}
+            disabled={!canSend || tooLong}
             loading={send.isPending}
             onClick={() => send.mutate(draft)}
           >

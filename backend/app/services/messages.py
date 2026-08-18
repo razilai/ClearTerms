@@ -13,9 +13,12 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.db.repos import attachments as attachments_repo
 from app.db.repos import messages as messages_repo
 from app.db.repos import users as users_repo
 from app.models import Conversation, Message, User
+from app.models.attachment import Attachment
 from app.schemas.messages import (
     ConversationDetail,
     ConversationOut,
@@ -24,7 +27,12 @@ from app.schemas.messages import (
     UnreadTotal,
 )
 from app.schemas.pagination import Page, slice_page
-from app.services.exceptions import InvalidInputError, NotFoundError
+from app.services import media as media_service
+from app.services.exceptions import (
+    InvalidInputError,
+    NotFoundError,
+    TooManyAttachmentsError,
+)
 
 # One screen of history when a thread is opened; older pages come from
 # list_messages with a cursor.
@@ -40,7 +48,11 @@ def _other_id(conversation: Conversation, viewer_id: int) -> int:
     )
 
 
-def _message_out(message: Message, sender_email: str) -> MessageOut:
+def _message_out(
+    message: Message,
+    sender_email: str,
+    attachments: list[Attachment] | None = None,
+) -> MessageOut:
     return MessageOut(
         id=message.id,
         conversation_id=message.conversation_id,
@@ -48,7 +60,31 @@ def _message_out(message: Message, sender_email: str) -> MessageOut:
         body=message.body,
         created_at=message.created_at,
         read_at=message.read_at,
+        attachments=[
+            media_service.attachment_out(a) for a in attachments or []
+        ],
     )
+
+
+async def _claim_attachments(
+    session: AsyncSession, attachment_ids: list[int], user: User, message_id: int
+) -> list[Attachment]:
+    """Link uploaded attachments to a message; raise on any mismatch.
+
+    Mirrors the forum's claim helpers: the repo only links rows that are
+    user-owned and still unlinked, and the gap between requested and claimed is
+    what surfaces someone else's id or a double-claim.
+    """
+    if not attachment_ids:
+        return []
+    rows = await attachments_repo.claim_for_message(
+        session, attachment_ids, user.id, message_id
+    )
+    claimed = {a.id for a in rows if a.message_id == message_id}
+    for attachment_id in attachment_ids:
+        if attachment_id not in claimed:
+            raise NotFoundError("attachment")
+    return rows
 
 
 async def _require_participant(
@@ -83,6 +119,11 @@ async def _hydrate(
     ids = [c.id for c in conversations]
     previews = await messages_repo.latest_by_conversation(session, ids)
     unread = await messages_repo.count_unread(session, viewer_id, ids)
+    # One more batched query so a preview of an attachments-only message still
+    # renders something, rather than an empty row.
+    preview_attachments = await attachments_repo.list_for_messages(
+        session, [m.id for m in previews.values()]
+    )
     return [
         ConversationOut(
             id=c.id,
@@ -90,7 +131,11 @@ async def _hydrate(
             last_message_at=c.last_message_at,
             created_at=c.created_at,
             last_message=(
-                _message_out(previews[c.id], emails[previews[c.id].sender_id])
+                _message_out(
+                    previews[c.id],
+                    emails[previews[c.id].sender_id],
+                    preview_attachments.get(previews[c.id].id, []),
+                )
                 if c.id in previews
                 else None
             ),
@@ -153,7 +198,12 @@ async def list_messages(
     emails = await users_repo.get_emails(
         session, {conversation.user_a_id, conversation.user_b_id}
     )
-    items = [_message_out(m, emails[m.sender_id]) for m in rows]
+    attachments = await attachments_repo.list_for_messages(
+        session, [m.id for m in rows]
+    )
+    items = [
+        _message_out(m, emails[m.sender_id], attachments.get(m.id, [])) for m in rows
+    ]
     return Page(items=items, next_cursor=next_cursor)
 
 
@@ -177,17 +227,30 @@ async def get_conversation_detail(
 
 
 async def send_message(
-    session: AsyncSession, user: User, conversation_id: int, body: str
+    session: AsyncSession,
+    user: User,
+    conversation_id: int,
+    body: str,
+    attachment_ids: list[int] | None = None,
 ) -> MessageOut:
     """Post into a thread the sender is part of, and float it up the inbox."""
+    attachment_ids = attachment_ids or []
+    if len(attachment_ids) > settings.max_attachments_per_item:
+        raise TooManyAttachmentsError()
+    if not body.strip() and not attachment_ids:
+        raise InvalidInputError("a message needs text or an attachment")
+
     await _require_participant(session, user.id, conversation_id)
     message = await messages_repo.create_message(
         session, conversation_id, user.id, body
     )
+    attachments = await _claim_attachments(
+        session, attachment_ids, user, message.id
+    )
     # Bump with the message's own timestamp rather than a fresh clock reading,
     # so last_message_at always equals the newest message's created_at.
     await messages_repo.touch(session, conversation_id, message.created_at)
-    return _message_out(message, user.email)
+    return _message_out(message, user.email, attachments)
 
 
 async def mark_read(

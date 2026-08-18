@@ -132,6 +132,7 @@ export interface MessageOut {
   // Set once the other party opened the thread; always null on messages you
   // received, since reading them is what clears it.
   read_at: string | null
+  attachments: AttachmentOut[]
 }
 
 export interface ConversationOut {

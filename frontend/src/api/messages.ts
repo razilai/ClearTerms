@@ -56,14 +56,18 @@ export function listMessages(
   )
 }
 
+// Attachments are uploaded first (see uploadAttachment in ./forum — the upload
+// endpoint is shared, an unlinked attachment belongs to nothing yet) and their
+// ids are claimed by the message on send.
 export function sendMessage(
   conversationId: number,
   body: string,
+  attachmentIds: number[] = [],
 ): Promise<MessageOut> {
   return requestJson<MessageOut>(
     `/messages/conversations/${conversationId}/messages`,
     'POST',
-    { body },
+    { body, attachment_ids: attachmentIds },
   )
 }
 

@@ -22,6 +22,8 @@ from fastapi import UploadFile
 
 from app.core import storage
 from app.core.config import settings
+from app.models.attachment import Attachment
+from app.schemas.forum import AttachmentOut
 from app.services.exceptions import FileTooLargeError, UnsupportedMediaTypeError
 
 
@@ -29,6 +31,28 @@ def _sniff_mime(data: bytes) -> str | None:
     """Return real MIME type from file content; None if unrecognised."""
     kind = filetype.guess(data)
     return kind.mime if kind is not None else None
+
+
+def attachment_out(a: Attachment) -> AttachmentOut:
+    """ORM row -> wire shape, minting presigned URLs for whatever is ready.
+
+    Lives here rather than in the forum service because attachments hang off
+    posts, comments and messages alike; every one of those reads maps them the
+    same way.
+    """
+    return AttachmentOut(
+        id=a.id,
+        media_type=a.media_type,
+        status=a.status,
+        mime=a.mime,
+        width=a.width,
+        height=a.height,
+        duration_seconds=a.duration_seconds,
+        display_url=storage.presigned_get_url(a.display_key) if a.display_key else None,
+        thumbnail_url=(
+            storage.presigned_get_url(a.thumbnail_key) if a.thumbnail_key else None
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -19,10 +19,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent.categories import SCORE_AGGRESSIVE, SCORE_STANDARD
 from app.core.config import settings
 from app.core.logging import JsonFormatter, setup_logging
+from app.db.repos import attachments as attachments_repo
 from app.db.repos import documents, history, preferences, users
 from app.db.repos import messages as messages_repo
 from app.db.repos import rate_limit as rate_limit_repo
-from app.models import Analysis, Document, Finding, Preference, RateLimit, User
+from app.models import (
+    Analysis,
+    Attachment,
+    Document,
+    Finding,
+    Post,
+    Preference,
+    RateLimit,
+    User,
+)
 from app.schemas.preferences import PreferenceItem
 from app.services import auth
 from app.services import history as history_service
@@ -1774,3 +1784,71 @@ async def test_unread_total_ignores_other_users_conversations(
     await messages_repo.create_message(session, others.id, b, "not for a")
 
     assert await messages_repo.count_unread_total(session, a) == 0
+
+
+# --- attachment ownership (shared by posts, comments and messages) -----------
+
+
+async def _attachment(session: AsyncSession, user_id: int, key: str) -> Attachment:
+    return await attachments_repo.create(
+        session,
+        user_id=user_id,
+        media_type="image",
+        mime="image/png",
+        size_bytes=1,
+        original_key=key,
+    )
+
+
+async def test_orphan_sweep_spares_message_attachments(
+    session: AsyncSession,
+) -> None:
+    """A message-claimed attachment must not look unlinked to the sweep.
+
+    Nothing else would catch this: the sweep deletes the stored objects, so a
+    regression here silently destroys files inside live conversations.
+    """
+    a, b = await _two_users(session)
+    conversation = await messages_repo.get_or_create(session, a, b)
+    message = await messages_repo.create_message(session, conversation.id, a, "hi")
+
+    unclaimed = await _attachment(session, a, "key-unclaimed")
+    claimed = await _attachment(session, a, "key-claimed")
+    await attachments_repo.claim_for_message(session, [claimed.id], a, message.id)
+
+    # Cutoff in the future so age never excludes either row: linkage is the
+    # only thing under test here.
+    cutoff = (datetime.now(UTC) + timedelta(minutes=1)).timestamp()
+    swept = {row.id for row in await attachments_repo.list_unlinked_before(session, cutoff)}
+
+    assert unclaimed.id in swept, "a genuinely unlinked attachment is still collected"
+    assert claimed.id not in swept, "a message's attachment must survive the sweep"
+
+
+async def test_attachment_cannot_have_two_owners(session: AsyncSession) -> None:
+    """ck_attachments_single_owner covers all three owner columns.
+
+    The old pairwise form only forbade post+comment, so post+message slipped
+    through; this pins the num_nonnulls version.
+    """
+    a, b = await _two_users(session)
+    conversation = await messages_repo.get_or_create(session, a, b)
+    message = await messages_repo.create_message(session, conversation.id, a, "hi")
+    post = Post(user_id=a, title="t", body="b")
+    session.add(post)
+    await session.flush()
+
+    session.add(
+        Attachment(
+            user_id=a,
+            post_id=post.id,
+            message_id=message.id,
+            media_type="image",
+            status="ready",
+            mime="image/png",
+            size_bytes=1,
+            original_key="key-two-owners",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await session.flush()

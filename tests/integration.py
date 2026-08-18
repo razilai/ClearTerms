@@ -1136,6 +1136,135 @@ async def test_cannot_claim_other_users_attachment(
     assert resp.status_code == 404
 
 
+async def test_message_with_attachment(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """Round trip: claimed on send, visible to the recipient, and in the inbox
+    preview so an attachments-only message isn't a blank row."""
+    alice = await signup_headers(committing_client, "alice-dm-att@example.com")
+    bob = await signup_headers(committing_client, "bob-dm-att@example.com")
+    conversation_id = (
+        await committing_client.post(
+            "/messages/conversations",
+            json={"recipient_email": "bob-dm-att@example.com"},
+            headers=alice,
+        )
+    ).json()["id"]
+
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    att_id = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=alice
+        )
+    ).json()["id"]
+
+    sent = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "look at this", "attachment_ids": [att_id]},
+        headers=alice,
+    )
+    assert sent.status_code == 201, sent.text
+    assert [a["id"] for a in sent.json()["attachments"]] == [att_id]
+
+    detail = await committing_client.get(
+        f"/messages/conversations/{conversation_id}", headers=bob
+    )
+    assert [a["id"] for a in detail.json()["messages"][0]["attachments"]] == [att_id]
+
+    inbox = await committing_client.get("/messages/conversations", headers=bob)
+    preview = inbox.json()["items"][0]["last_message"]
+    assert [a["id"] for a in preview["attachments"]] == [att_id]
+
+
+async def test_message_cannot_claim_another_users_attachment(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """Mirrors the forum's rule: an id you did not upload is not yours to send,
+    and one already claimed cannot be claimed twice."""
+    alice = await signup_headers(committing_client, "alice-dm-steal@example.com")
+    mallory = await signup_headers(committing_client, "mallory-dm@example.com")
+    conversation_id = (
+        await committing_client.post(
+            "/messages/conversations",
+            json={"recipient_email": "alice-dm-steal@example.com"},
+            headers=mallory,
+        )
+    ).json()["id"]
+
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    alice_att = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=alice
+        )
+    ).json()["id"]
+
+    stealing = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "not mine", "attachment_ids": [alice_att]},
+        headers=mallory,
+    )
+    assert stealing.status_code == 404
+
+    # Mallory's own attachment, claimed once, cannot be re-sent.
+    own = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=mallory
+        )
+    ).json()["id"]
+    first = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "mine", "attachment_ids": [own]},
+        headers=mallory,
+    )
+    assert first.status_code == 201, first.text
+    again = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "again", "attachment_ids": [own]},
+        headers=mallory,
+    )
+    assert again.status_code == 404
+
+
+async def test_message_body_optional_only_with_an_attachment(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """Deliberate divergence from posts: a picture with no caption is a normal
+    message, but a message with neither text nor attachment is not."""
+    alice = await signup_headers(committing_client, "alice-dm-empty@example.com")
+    await signup_headers(committing_client, "bob-dm-empty@example.com")
+    conversation_id = (
+        await committing_client.post(
+            "/messages/conversations",
+            json={"recipient_email": "bob-dm-empty@example.com"},
+            headers=alice,
+        )
+    ).json()["id"]
+
+    empty = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "   "},
+        headers=alice,
+    )
+    assert empty.status_code == 400
+
+    files = {"file": ("img.png", _TINY_PNG, "image/png")}
+    att_id = (
+        await committing_client.post(
+            "/forum/attachments", files=files, headers=alice
+        )
+    ).json()["id"]
+    caption_less = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "", "attachment_ids": [att_id]},
+        headers=alice,
+    )
+    assert caption_less.status_code == 201, caption_less.text
+    assert caption_less.json()["body"] == ""
+
+
 async def test_upload_unsupported_type(
     client: httpx.AsyncClient,
     auth_headers: dict,

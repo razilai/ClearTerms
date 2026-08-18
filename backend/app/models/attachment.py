@@ -11,14 +11,16 @@ from app.models.base import Base
 class Attachment(Base):
     __tablename__ = "attachments"
     __table_args__ = (
-        # At most one of post_id / comment_id is set; both null = unlinked (just
-        # uploaded, not yet claimed by a post/comment create).
+        # At most one owner of post_id / comment_id / message_id; all null =
+        # unlinked (just uploaded, not yet claimed by a create). num_nonnulls
+        # scales to three columns where the old pairwise NOT(...AND...) did not.
         CheckConstraint(
-            "NOT (post_id IS NOT NULL AND comment_id IS NOT NULL)",
+            "num_nonnulls(post_id, comment_id, message_id) <= 1",
             name="ck_attachments_single_owner",
         ),
         Index("ix_attachments_post_id", "post_id"),
         Index("ix_attachments_comment_id", "comment_id"),
+        Index("ix_attachments_message_id", "message_id"),
         Index("ix_attachments_user_created", "user_id", "created_at"),
     )
 
@@ -31,6 +33,9 @@ class Attachment(Base):
     )
     comment_id: Mapped[int | None] = mapped_column(
         ForeignKey("comments.id", ondelete="CASCADE")
+    )
+    message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE")
     )
 
     media_type: Mapped[str] = mapped_column(String(8))   # "image" | "video"

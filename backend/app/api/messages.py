@@ -91,7 +91,7 @@ async def send_message(
     user: CurrentUserDep,
 ) -> MessageOut:
     return await messages_service.send_message(
-        session, user, conversation_id, body.body
+        session, user, conversation_id, body.body, body.attachment_ids
     )
 
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.schemas.auth import LowercaseEmail
+from app.schemas.forum import AttachmentOut
 
 
 class ConversationCreate(BaseModel):
@@ -25,7 +26,12 @@ class ConversationCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     # body is a TEXT column, so the cap is product policy, not storage.
-    body: str = Field(min_length=1, max_length=settings.max_message_body_chars)
+    # Empty when the message is attachments only — a picture with no caption is
+    # a normal thing to send, unlike an empty post.
+    body: str = Field(default="", max_length=settings.max_message_body_chars)
+    attachment_ids: list[int] = Field(
+        default_factory=list, max_length=settings.max_attachments_per_item
+    )
 
 
 class MessageOut(BaseModel):
@@ -37,6 +43,7 @@ class MessageOut(BaseModel):
     # Set once the *other* party has opened the thread. Always None on messages
     # the viewer received, since reading them is what clears it.
     read_at: datetime | None = None
+    attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
 class ConversationOut(BaseModel):
