@@ -9,6 +9,7 @@ from app.agent.categories import SCORE_AGGRESSIVE
 from app.core.config import settings
 from app.db.repos import documents, history, preferences, users
 from app.models import Analysis, Document, User
+from app.schemas.pagination import decode_cursor
 from app.services import history as history_service
 from tests.unit.factories import _items
 
@@ -67,11 +68,12 @@ async def test_list_for_user_orders_newest_first(session: AsyncSession) -> None:
     newest = await history.append(session, user.id, doc.id, "up")
     oldest = await history.append(session, user.id, doc.id, "down")
 
-    # created_at is a server_default of CURRENT_TIMESTAMP, which SQLite resolves
-    # to whole seconds — rows appended in one test would otherwise share a
-    # timestamp and leave the ordering undefined. Assigning explicitly also puts
-    # created_at order deliberately out of step with insertion order, so this
-    # pins ordering by created_at rather than by id.
+    # created_at is a server_default of CURRENT_TIMESTAMP, which Postgres freezes
+    # at transaction-start time — so every row appended inside this test's outer
+    # transaction shares one identical value, leaving the ordering undefined.
+    # Assigning explicitly fixes that and also puts created_at order deliberately
+    # out of step with insertion order, so this pins ordering by created_at
+    # rather than by id.
     base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     oldest.created_at = base
     middle.created_at = base + timedelta(minutes=5)
@@ -165,3 +167,34 @@ async def test_list_history_falls_back_to_stored_verdict_without_cached_scores(
 
     page = await history_service.list_history(session, user.id, limit=50, cursor=None)
     assert [e.verdict for e in page.items] == ["down"]
+
+
+async def test_list_history_paginates_by_cursor(session: AsyncSession) -> None:
+    """Keyset pagination on (created_at, id), newest first — the same mechanism
+    the forum lists use, but only ever exercised at cursor=None until now.
+
+    HistoryEntryOut carries no entry id, so the page contents are distinguished
+    by created_at (assigned explicitly: all three share the transaction-start
+    server_default otherwise, see the ordering test above)."""
+    user, doc = await _user_and_document(session)
+    entries = [await history.append(session, user.id, doc.id, "up") for _ in range(3)]
+    base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    for n, entry in enumerate(entries):
+        entry.created_at = base + timedelta(minutes=n)
+    await session.flush()
+
+    page1 = await history_service.list_history(session, user.id, limit=2, cursor=None)
+    assert len(page1.items) == 2
+    assert page1.next_cursor is not None
+
+    page2 = await history_service.list_history(
+        session, user.id, limit=2, cursor=decode_cursor(page1.next_cursor)
+    )
+    assert len(page2.items) == 1
+    assert page2.next_cursor is None
+
+    seen = [e.created_at for e in page1.items + page2.items]
+    # Newest-first across the page boundary, every entry exactly once (no gap,
+    # no overlap).
+    assert seen == sorted(seen, reverse=True)
+    assert len(set(seen)) == 3

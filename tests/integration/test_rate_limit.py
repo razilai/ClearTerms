@@ -17,7 +17,8 @@ from tests.integration.factories import ANALYZE_BODY
 # connection) is visible across requests — the shared-session `client` fixture
 # would keep everything in one uncommitted transaction. The transaction-boundary
 # property (a failed request still counts) is proven at the service tier in
-# unit.py; here we prove the routes are wired and return 429 + Retry-After.
+# unit/test_rate_limit.py; here we prove the routes are wired and return 429 +
+# Retry-After.
 
 
 async def test_login_is_rate_limited_per_ip(

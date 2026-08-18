@@ -3,6 +3,7 @@
 
 import httpx
 
+from app.services import auth
 from tests.conftest import signup_headers
 
 # --- auth ---
@@ -64,5 +65,18 @@ async def test_login_wrong_password(client: httpx.AsyncClient) -> None:
 async def test_login_unknown_email(client: httpx.AsyncClient) -> None:
     resp = await client.post(
         "/auth/login", data={"username": "ghost@example.com", "password": "pw"}
+    )
+    assert resp.status_code == 401
+
+
+async def test_valid_token_for_nonexistent_user_is_rejected(
+    client: httpx.AsyncClient,
+) -> None:
+    """A correctly signed token whose subject no longer exists (deleted account,
+    or an id that never existed) must 401 — signature validity alone is not
+    authorisation; CurrentUserDep still has to find the row."""
+    token = auth.create_access_token(999_999)
+    resp = await client.get(
+        "/forum/posts", headers={"Authorization": f"Bearer {token}"}
     )
     assert resp.status_code == 401

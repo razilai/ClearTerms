@@ -86,7 +86,8 @@ async def test_deleting_an_analysis_deletes_its_findings(session: AsyncSession) 
     await session.delete(analyses[0])
     await session.flush()
 
-    # delete-orphan cascades in Python, so this holds without SQLite's
-    # PRAGMA foreign_keys=ON, which the app never sets.
+    # delete-orphan is an ORM-level cascade — SQLAlchemy itself issues the child
+    # DELETE on flush — so orphan removal holds regardless of the database's own
+    # FK cascade behaviour.
     remaining = await session.execute(select(Finding))
     assert remaining.scalars().all() == []
