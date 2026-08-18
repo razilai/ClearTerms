@@ -146,7 +146,7 @@ def build_agent() -> Agent[str, ChunkFindings]:
     on either mode.
     """
     output_type: NativeOutput[ChunkFindings] | type[ChunkFindings]
-    if settings.llm_provider == "openrouter":
+    if settings.use_openrouter:
         provider: OllamaProvider | OpenRouterProvider = OpenRouterProvider(
             api_key=settings.openrouter_api_key.get_secret_value(),
         )

@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
 
-    # LLM backend. "ollama" runs against a local Ollama daemon (ollama_base_url);
-    # "openrouter" calls OpenRouter's OpenAI-compatible API (openrouter_api_key),
-    # letting agent_model name any OpenRouter slug (e.g. inclusionai/ling-3.0-flash).
-    llm_provider: Literal["ollama", "openrouter"] = "ollama"
+    # LLM backend, auto-selected: if openrouter_api_key is set we call
+    # OpenRouter's OpenAI-compatible API (agent_model names any OpenRouter slug,
+    # e.g. inclusionai/ling-3.0-flash); otherwise we run against a local Ollama
+    # daemon (ollama_base_url). No explicit switch — presence of the key decides.
     ollama_base_url: str = "http://localhost:11434"
     openrouter_api_key: SecretStr = SecretStr("")
     agent_model: str = "gemma3:4b"
@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     allowed_video_mimes: frozenset[str] = frozenset(
         {"video/mp4", "video/webm", "video/quicktime"}
     )
+
+    @property
+    def use_openrouter(self) -> bool:
+        """True when an OpenRouter key is configured; otherwise use local Ollama."""
+        return bool(self.openrouter_api_key.get_secret_value())
 
     @model_validator(mode="after")
     def _guard_prod_secrets(self) -> "Settings":

@@ -104,8 +104,14 @@ the `pgdata` docker volume, not here.)
 ## Run
 
 ```bash
+cp -n .env.example .env    # create local config (won't overwrite an existing .env)
 uv sync
 uv run uvicorn app.main:app --reload
 ```
+
+`.env` is gitignored; `.env.example` is the tracked template of every
+`CLEARTERMS_` setting. Every field is optional in dev (the app has working
+defaults) — fill only what you override. `cp -n` never clobbers an existing
+`.env`.
 
 Health check: `GET http://localhost:8000/health` → `{"status": "ok"}`.
