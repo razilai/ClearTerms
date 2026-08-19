@@ -239,6 +239,36 @@ below).
   Frontend: `pages/MessagesPage.tsx` (two panes, thread keyed by the URL at
   `/messages/:conversationId` like `/forum/:postId`), unread badge on the §4 nav
   item polled every 30s and invalidated when the inbox mounts.
+- **Notifications** (`services/notifications.py`, `api/notifications.py`): one
+  `notifications` row per event another user caused — `dm`, `post_comment`,
+  `post_vote`, `comment_vote`. Routes: `GET /notifications` (keyset page newest
+  first, and the `unread_count` in the same response so one 30s poll feeds both
+  the toasts and the bell), `POST /notifications/{id}/read`,
+  `POST /notifications/read`. Someone else's notification is **404, not 403**,
+  like conversations. The whole collapse policy is one
+  `UniqueConstraint(recipient_id, actor_id, kind, target_id)` plus a per-kind
+  choice of what `target_id` means: a vote points at the thing voted on, so one
+  actor voting repeatedly upserts a single row (bumping `created_at`, rewriting
+  `value`, clearing `read_at`), while a DM points at the message and a comment
+  at the comment, so those never collapse. Clearing a vote emits nothing.
+  The upsert expires the row in the session's identity map afterwards —
+  `ON CONFLICT` rewrites columns behind the ORM's back, so a loaded instance
+  would otherwise keep serving its pre-conflict `value`.
+  `post_id` / `comment_id` / `conversation_id` are nullable FKs that exist for
+  `ON DELETE CASCADE` — `target_id` cannot be a FK since its referent varies —
+  with reads using `post_id` and `conversation_id` for navigation.
+  `emit()` is called by `services/forum.py` and `services/messages.py` on the
+  caller's session (so a rolled-back action leaves no phantom) and returns early
+  when `actor_id == recipient_id`. Actors are named for every kind, votes
+  included: this is the first place the forum reveals *who* voted, aggregate
+  counts having been the only vote surface before.
+  Frontend: `lib/useNotificationToasts.ts` polls, diffs against a `useRef`
+  watermark and toasts what is new — the first poll seeds the mark and toasts
+  nothing, so logging in after a backlog shows a badge rather than a wall of
+  toasts, and a remount cannot re-toast. `components/NotificationBell.tsx` in
+  the header shows the unread count and marks all read. There is no list page.
+  The bell and the §4 DM badge are deliberately independent counters: the bell
+  counts events not yet acknowledged, §4 counts messages not yet opened.
 
 **Stubbed / not implemented:**
 - **Logging** (`core/logging.py::setup_logging`) is a no-op — wired into lifespan
