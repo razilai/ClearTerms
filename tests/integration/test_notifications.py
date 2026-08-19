@@ -163,3 +163,118 @@ async def test_every_dm_notifies_the_recipient_separately(
     assert {n.conversation_id for n in rows} == {conversation_id}
     assert all(n.post_id is None for n in rows)
     assert await notifications_repo.list_for_user(session, bob_id, 10) == []
+
+
+async def test_the_feed_names_the_actor_and_carries_the_post_title(
+    client: httpx.AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    bob = await signup_headers(client, "bob@example.com")
+    post_id = (
+        await client.post("/forum/posts", json=POST_BODY, headers=auth_headers)
+    ).json()["id"]
+    await client.put(f"/forum/posts/{post_id}/vote", json={"value": 1}, headers=bob)
+
+    resp = await client.get("/notifications?limit=15", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["unread_count"] == 1
+    item = payload["items"][0]
+    assert item["kind"] == "post_vote"
+    assert item["actor_email"] == "bob@example.com"
+    assert item["value"] == 1
+    assert item["post_id"] == post_id
+    assert item["post_title"] == POST_BODY["title"]
+    assert item["conversation_id"] is None
+    assert item["read_at"] is None
+
+
+async def test_marking_one_read_clears_it_from_the_unread_count(
+    client: httpx.AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    bob = await signup_headers(client, "bob@example.com")
+    post_id = (
+        await client.post("/forum/posts", json=POST_BODY, headers=auth_headers)
+    ).json()["id"]
+    await client.post(
+        f"/forum/posts/{post_id}/comments", json={"body": "hi"}, headers=bob
+    )
+    notification_id = (
+        await client.get("/notifications", headers=auth_headers)
+    ).json()["items"][0]["id"]
+
+    resp = await client.post(
+        f"/notifications/{notification_id}/read", headers=auth_headers
+    )
+    assert resp.status_code == 204, resp.text
+    payload = (await client.get("/notifications", headers=auth_headers)).json()
+    assert payload["unread_count"] == 0
+    assert payload["items"][0]["read_at"] is not None
+
+
+async def test_marking_someone_elses_notification_read_is_404(
+    client: httpx.AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    bob = await signup_headers(client, "bob@example.com")
+    post_id = (
+        await client.post("/forum/posts", json=POST_BODY, headers=auth_headers)
+    ).json()["id"]
+    await client.post(
+        f"/forum/posts/{post_id}/comments", json={"body": "hi"}, headers=bob
+    )
+    notification_id = (
+        await client.get("/notifications", headers=auth_headers)
+    ).json()["items"][0]["id"]
+
+    resp = await client.post(f"/notifications/{notification_id}/read", headers=bob)
+    assert resp.status_code == 404, resp.text
+
+
+async def test_mark_all_read_reports_what_it_changed(
+    client: httpx.AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    bob = await signup_headers(client, "bob@example.com")
+    post_id = (
+        await client.post("/forum/posts", json=POST_BODY, headers=auth_headers)
+    ).json()["id"]
+    for body in ("one", "two"):
+        await client.post(
+            f"/forum/posts/{post_id}/comments", json={"body": body}, headers=bob
+        )
+
+    resp = await client.post("/notifications/read", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"marked_count": 2}
+    assert (
+        await client.get("/notifications", headers=auth_headers)
+    ).json()["unread_count"] == 0
+
+
+async def test_the_feed_requires_auth(client: httpx.AsyncClient) -> None:
+    assert (await client.get("/notifications")).status_code == 401
+
+
+async def test_the_feed_pages_by_cursor(
+    client: httpx.AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    bob = await signup_headers(client, "bob@example.com")
+    post_id = (
+        await client.post("/forum/posts", json=POST_BODY, headers=auth_headers)
+    ).json()["id"]
+    for body in ("one", "two", "three"):
+        await client.post(
+            f"/forum/posts/{post_id}/comments", json={"body": body}, headers=bob
+        )
+
+    first = (
+        await client.get("/notifications?limit=2", headers=auth_headers)
+    ).json()
+    assert len(first["items"]) == 2
+    assert first["next_cursor"] is not None
+    second = (
+        await client.get(
+            f"/notifications?limit=2&cursor={first['next_cursor']}",
+            headers=auth_headers,
+        )
+    ).json()
+    assert len(second["items"]) == 1
+    assert second["next_cursor"] is None
