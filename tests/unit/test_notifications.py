@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.repos import notifications as notifications_repo
 from app.db.repos import users
 from app.models import Notification
+from app.services import notifications as notifications_service
+from app.services.exceptions import NotFoundError
 
 
 async def _two_users(session: AsyncSession) -> tuple[int, int]:
@@ -93,3 +95,32 @@ async def test_mark_all_read_only_touches_the_owner_and_is_idempotent(
     assert await notifications_repo.mark_all_read(session, ada, now) == 1
     assert await notifications_repo.mark_all_read(session, ada, now) == 0
     assert await notifications_repo.count_unread(session, bob) == 1
+
+
+async def test_emit_is_silent_for_your_own_actions(session: AsyncSession) -> None:
+    """Commenting on or voting your own content must not notify you."""
+    ada, _ = await _two_users(session)
+    await notifications_service.emit(
+        session,
+        recipient_id=ada,
+        actor_id=ada,
+        kind="post_comment",
+        target_id=1,
+        post_id=None,
+    )
+    assert await notifications_repo.count_unread(session, ada) == 0
+
+
+async def test_marking_someone_elses_notification_is_not_found(
+    session: AsyncSession,
+) -> None:
+    """404, not 403: ids are sequential, so a 403 would confirm the row exists."""
+    ada, bob = await _two_users(session)
+    await notifications_repo.upsert(
+        session, recipient_id=ada, actor_id=bob, kind="post_comment", target_id=1
+    )
+    mine = (await notifications_repo.list_for_user(session, ada, 10))[0]
+    with pytest.raises(NotFoundError):
+        await notifications_service.mark_read(session, bob, mine.id)
+    with pytest.raises(NotFoundError):
+        await notifications_service.mark_read(session, ada, mine.id + 999)
