@@ -1,9 +1,12 @@
 """Unit tests for the notifications model, repo and emit policy."""
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.repos import notifications as notifications_repo
 from app.db.repos import users
 from app.models import Notification
 
@@ -32,3 +35,61 @@ async def test_duplicate_event_violates_the_unique_constraint(
         )
     with pytest.raises(IntegrityError):
         await session.flush()
+
+
+async def test_upsert_collapses_a_repeated_event_and_resurfaces_it(
+    session: AsyncSession,
+) -> None:
+    """Second upsert on the same key updates in place: value is rewritten and
+    read_at cleared, so a like -> dislike flip re-notifies rather than adding
+    a row."""
+    ada, bob = await _two_users(session)
+    await notifications_repo.upsert(
+        session, recipient_id=ada, actor_id=bob, kind="post_vote", target_id=7, value=1
+    )
+    first = (await notifications_repo.list_for_user(session, ada, 10))[0]
+    await notifications_repo.mark_read(session, first.id, datetime.now(tz=UTC))
+    assert await notifications_repo.count_unread(session, ada) == 0
+
+    await notifications_repo.upsert(
+        session, recipient_id=ada, actor_id=bob, kind="post_vote", target_id=7, value=-1
+    )
+    rows = await notifications_repo.list_for_user(session, ada, 10)
+    assert len(rows) == 1
+    assert rows[0].id == first.id
+    assert rows[0].value == -1
+    assert rows[0].read_at is None
+    assert await notifications_repo.count_unread(session, ada) == 1
+
+
+async def test_distinct_targets_are_distinct_notifications(
+    session: AsyncSession,
+) -> None:
+    """Different target_id means a different event — this is what makes two
+    comments from one actor produce two notifications."""
+    ada, bob = await _two_users(session)
+    for target in (1, 2):
+        await notifications_repo.upsert(
+            session,
+            recipient_id=ada,
+            actor_id=bob,
+            kind="post_comment",
+            target_id=target,
+        )
+    assert len(await notifications_repo.list_for_user(session, ada, 10)) == 2
+
+
+async def test_mark_all_read_only_touches_the_owner_and_is_idempotent(
+    session: AsyncSession,
+) -> None:
+    ada, bob = await _two_users(session)
+    await notifications_repo.upsert(
+        session, recipient_id=ada, actor_id=bob, kind="post_comment", target_id=1
+    )
+    await notifications_repo.upsert(
+        session, recipient_id=bob, actor_id=ada, kind="post_comment", target_id=2
+    )
+    now = datetime.now(tz=UTC)
+    assert await notifications_repo.mark_all_read(session, ada, now) == 1
+    assert await notifications_repo.mark_all_read(session, ada, now) == 0
+    assert await notifications_repo.count_unread(session, bob) == 1

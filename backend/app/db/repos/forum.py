@@ -55,6 +55,19 @@ async def list_posts(
     return list(result.scalars().all())
 
 
+async def get_post_titles(
+    session: AsyncSession, post_ids: Iterable[int]
+) -> dict[int, str]:
+    """Map post id -> title, for callers that render a post reference without
+    loading the whole row (the notification feed). One query for the page,
+    rather than an N+1."""
+    ids = list(post_ids)
+    if not ids:
+        return {}
+    result = await session.execute(select(Post.id, Post.title).where(Post.id.in_(ids)))
+    return {post_id: title for post_id, title in result.all()}
+
+
 class AuthorTotals(NamedTuple):
     post_count: int
     likes: int
