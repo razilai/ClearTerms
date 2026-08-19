@@ -51,10 +51,9 @@ export function AppLayout() {
     refetchInterval: 30_000,
   })
   const unreadCount = unread?.unread_count ?? 0
-  // Polls the notification feed and toasts new events; the count it returns
-  // drives the bell. Independent of the §4 badge above: that counts messages
-  // not yet opened, this counts events not yet acknowledged.
-  const notificationCount = useNotificationToasts()
+  // Polls the notification feed and toasts new events. Called for that side
+  // effect only — NotificationBell reads the same query for its badge and list.
+  useNotificationToasts()
 
   return (
     <AppShell
@@ -75,7 +74,7 @@ export function AppLayout() {
             <span className={classes.brandMark}>Terms Review</span>
           </Group>
           <Group gap="md">
-            <NotificationBell unreadCount={notificationCount} />
+            <NotificationBell />
             <Text className={classes.email} visibleFrom="xs">
               {email}
             </Text>

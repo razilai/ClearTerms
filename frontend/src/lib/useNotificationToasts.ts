@@ -15,11 +15,13 @@ import { notificationLink, notificationText } from './notificationText'
 // screen; past this many, the rest are summarised in one line.
 const TOAST_BURST = 5
 
-/** Polls the feed, toasts what is new, and returns the unread count.
+/** Polls the feed and toasts what is new.
  *
- * Mount once, in the app shell.
+ * Mount once, in the app shell. The badge and the history list are
+ * NotificationBell's job — it subscribes to the same query key, so both read
+ * one cache entry and only one request goes out.
  */
-export function useNotificationToasts(): number {
+export function useNotificationToasts(): void {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   // The high-water mark of ids already toasted. A ref, not query state, on
@@ -74,6 +76,4 @@ export function useNotificationToasts(): number {
       })
     }
   }, [data, navigate, queryClient])
-
-  return data?.unread_count ?? 0
 }
