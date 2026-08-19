@@ -41,7 +41,7 @@ import { CharCount } from '../components/CharCount'
 import { MediaDropzone } from '../components/MediaDropzone'
 import { PageHeader } from '../components/PageHeader'
 import { Pager } from '../components/Pager'
-import { MAX_MESSAGE_BODY_CHARS } from '../lib/limits'
+import { MAX_EMAIL_CHARS, MAX_MESSAGE_BODY_CHARS } from '../lib/limits'
 import { useKeysetPages } from '../lib/useKeysetPages'
 
 const PAGE_SIZE = 15
@@ -313,6 +313,7 @@ function Thread({ conversationId }: { conversationId: number }) {
           placeholder="Write a message"
           autosize
           minRows={2}
+          maxLength={MAX_MESSAGE_BODY_CHARS}
           value={draft}
           onChange={(event) => setDraft(event.currentTarget.value)}
         />
@@ -374,6 +375,7 @@ function NewConversation({ onOpened }: { onOpened: (id: number) => void }) {
         size="xs"
         label="New message"
         placeholder="their@email.com"
+        maxLength={MAX_EMAIL_CHARS}
         value={recipient}
         error={recipientError}
         onChange={(event) => {
