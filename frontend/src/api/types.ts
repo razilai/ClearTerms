@@ -173,3 +173,33 @@ export interface PreferenceItem {
 export interface PreferencesResponse {
   items: PreferenceItem[]
 }
+
+// Mirrors app/schemas/notifications.py. The backend ships kind + value rather
+// than a rendered sentence, so display copy stays a frontend concern.
+export type NotificationKind =
+  | 'dm'
+  | 'post_comment'
+  | 'post_vote'
+  | 'comment_vote'
+
+export interface NotificationOut {
+  id: number
+  kind: NotificationKind
+  actor_email: string
+  value: number | null
+  post_id: number | null
+  post_title: string | null
+  conversation_id: number | null
+  created_at: string
+  read_at: string | null
+}
+
+// A Page<NotificationOut> plus the unread total, so one poll feeds both the
+// toasts and the bell badge.
+export interface NotificationPage extends Page<NotificationOut> {
+  unread_count: number
+}
+
+export interface MarkAllReadResponse {
+  marked_count: number
+}
