@@ -15,6 +15,7 @@ from app.models.finding import Finding
 from app.models.forum import Comment, CommentVote, Post, PostVote
 from app.models.history import HistoryEntry
 from app.models.message import Message
+from app.models.notification import Notification
 from app.models.preference import Preference
 from app.models.rate_limit import RateLimit
 from app.models.user import User
@@ -30,6 +31,7 @@ __all__ = [
     "Finding",
     "HistoryEntry",
     "Message",
+    "Notification",
     "Post",
     "PostVote",
     "Preference",
