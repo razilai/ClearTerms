@@ -37,6 +37,7 @@ import { CharCount } from '../components/CharCount'
 import { CommentItem } from '../components/CommentItem'
 import { MediaDropzone } from '../components/MediaDropzone'
 import { VoteButtons } from '../components/VoteButtons'
+import { VotersModal } from '../components/VotersModal'
 import { MAX_COMMENT_BODY_CHARS } from '../lib/limits'
 
 const showError = (err: Error) =>
@@ -66,6 +67,7 @@ export function PostDetailPage() {
   const [extraComments, setExtraComments] = useState<CommentOut[]>([])
   const [commentsCursor, setCommentsCursor] = useState<string | null>(null)
   const [loadingComments, setLoadingComments] = useState(false)
+  const [votersOpen, setVotersOpen] = useState(false)
 
   useEffect(() => {
     if (post) {
@@ -206,6 +208,13 @@ export function PostDetailPage() {
               queryClient.invalidateQueries({ queryKey: ['posts'] })
               return result
             }}
+            onShowVoters={isOwnPost ? () => setVotersOpen(true) : undefined}
+          />
+          <VotersModal
+            kind="post"
+            targetId={postId}
+            opened={votersOpen}
+            onClose={() => setVotersOpen(false)}
           />
           {isOwnPost && (
             <Button color="red" variant="light" size="xs" onClick={openConfirm}>

@@ -6,6 +6,7 @@ import { MAX_COMMENT_BODY_CHARS } from '../lib/limits'
 import { AttachmentGrid } from './AttachmentGrid'
 import { CharCount } from './CharCount'
 import { VoteButtons } from './VoteButtons'
+import { VotersModal } from './VotersModal'
 
 interface Props {
   comment: CommentOut
@@ -25,6 +26,7 @@ export function CommentItem({
   busy,
 }: Props) {
   const [editing, setEditing] = useState(false)
+  const [votersOpen, setVotersOpen] = useState(false)
   const [draft, setDraft] = useState(comment.body)
 
   const save = async () => {
@@ -114,6 +116,13 @@ export function CommentItem({
               myVote={comment.my_vote}
               onVote={onVote}
               size="compact-xs"
+              onShowVoters={isOwn ? () => setVotersOpen(true) : undefined}
+            />
+            <VotersModal
+              kind="comment"
+              targetId={comment.id}
+              opened={votersOpen}
+              onClose={() => setVotersOpen(false)}
             />
           </Group>
         </>

@@ -203,3 +203,10 @@ export interface NotificationPage extends Page<NotificationOut> {
 export interface MarkAllReadResponse {
   marked_count: number
 }
+
+// Mirrors app/schemas/forum.py::VoterOut. Owner-only: the API returns this
+// list to the author of the voted-on post or comment and 403s everyone else.
+export interface VoterOut {
+  email: string
+  value: number
+}

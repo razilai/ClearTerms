@@ -9,6 +9,9 @@ interface Props {
   myVote: number
   onVote: (value: 1 | -1) => Promise<VoteResponse>
   size?: 'compact-xs' | 'xs'
+  // Supplied only by the author of the voted-on thing — the endpoint behind it
+  // 403s everyone else, so the button must not exist for them.
+  onShowVoters?: () => void
 }
 
 /**
@@ -26,6 +29,7 @@ export function VoteButtons({
   myVote,
   onVote,
   size = 'xs',
+  onShowVoters,
 }: Props) {
   const [state, setState] = useState({ likeCount, dislikeCount, myVote })
   const [busy, setBusy] = useState(false)
@@ -71,6 +75,17 @@ export function VoteButtons({
       >
         ✕ {state.dislikeCount}
       </Button>
+      {onShowVoters && (
+        <Button
+          variant="subtle"
+          color="ink"
+          size={size}
+          aria-label="See who voted"
+          onClick={onShowVoters}
+        >
+          who?
+        </Button>
+      )}
     </Group>
   )
 }

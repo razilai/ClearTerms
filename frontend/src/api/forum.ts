@@ -8,6 +8,7 @@ import type {
   PostDetail,
   PostOut,
   VoteResponse,
+  VoterOut,
 } from './types'
 
 // One keyset page of posts, newest first. Pass the previous page's next_cursor
@@ -103,4 +104,33 @@ export function addCommentWithAttachments(
     body,
     attachment_ids: attachmentIds,
   })
+}
+
+// Who voted on a post — the post's author only, 403 otherwise. `value` narrows
+// to likes (1) or dislikes (-1); omit it for both. The cursor here is the last
+// vote's id, not a (created_at, id) pair, because vote rows carry no timestamp.
+export function listPostVoters(
+  postId: number,
+  limit: number,
+  cursor?: string | null,
+  value?: 1 | -1,
+): Promise<Page<VoterOut>> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  if (value) params.set('value', String(value))
+  return request<Page<VoterOut>>(`/forum/posts/${postId}/votes?${params}`)
+}
+
+// Who voted on a comment — the comment's author only. Authoring the post it
+// sits under does not grant access.
+export function listCommentVoters(
+  commentId: number,
+  limit: number,
+  cursor?: string | null,
+  value?: 1 | -1,
+): Promise<Page<VoterOut>> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  if (value) params.set('value', String(value))
+  return request<Page<VoterOut>>(`/forum/comments/${commentId}/votes?${params}`)
 }
