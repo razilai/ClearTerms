@@ -29,9 +29,10 @@ from app.schemas.forum import (
     PostDetail,
     PostOut,
     VoteResponse,
+    VoterOut,
 )
 from app.schemas.notifications import NotificationKind
-from app.schemas.pagination import Page, slice_page
+from app.schemas.pagination import Page, slice_page, slice_page_by_id
 from app.services import media as media_service
 from app.services import notifications as notifications_service
 from app.services.exceptions import (
@@ -506,6 +507,68 @@ async def _apply_vote(
     return VoteResponse(
         like_count=counts.likes, dislike_count=counts.dislikes, my_vote=my_vote
     )
+
+
+async def _voter_page(
+    session: AsyncSession,
+    model: type[forum_repo.VoteT],
+    target_id: int,
+    limit: int,
+    value: int | None,
+    cursor: int | None,
+) -> Page[VoterOut]:
+    """One keyset page of voters, with emails joined in one batched query."""
+    rows = await forum_repo.list_voters(
+        session, model, target_id, limit, value=value, cursor=cursor
+    )
+    rows, next_cursor = slice_page_by_id(rows, limit, lambda v: v.id)
+    emails = await users_repo.get_emails(session, {v.user_id for v in rows})
+    return Page(
+        items=[VoterOut(email=emails[v.user_id], value=v.value) for v in rows],
+        next_cursor=next_cursor,
+    )
+
+
+async def list_post_voters(
+    session: AsyncSession,
+    user_id: int,
+    post_id: int,
+    limit: int,
+    value: int | None = None,
+    cursor: int | None = None,
+) -> Page[VoterOut]:
+    """Who voted on a post — author only.
+
+    NotOwnerError (403), not NotFoundError: the post itself is public, so
+    hiding its existence would be pointless. Only the voter list is private.
+    This deliberately differs from conversations, where existence *is* the
+    secret.
+    """
+    post = await _require_post(session, post_id)
+    if post.user_id != user_id:
+        raise NotOwnerError()
+    return await _voter_page(session, PostVote, post_id, limit, value, cursor)
+
+
+async def list_comment_voters(
+    session: AsyncSession,
+    user_id: int,
+    comment_id: int,
+    limit: int,
+    value: int | None = None,
+    cursor: int | None = None,
+) -> Page[VoterOut]:
+    """Who voted on a comment — the comment's author only.
+
+    Ownership follows the voted-on thing, so authoring the post a comment sits
+    under does not grant a view of that comment's voters.
+    """
+    comment = await forum_repo.get_comment(session, comment_id)
+    if comment is None:
+        raise NotFoundError("comment")
+    if comment.user_id != user_id:
+        raise NotOwnerError()
+    return await _voter_page(session, CommentVote, comment_id, limit, value, cursor)
 
 
 def check_rate_limit(user_id: int) -> None:

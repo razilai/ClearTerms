@@ -105,3 +105,15 @@ class VoteResponse(BaseModel):
     like_count: int
     dislike_count: int
     my_vote: int
+
+
+class VoterOut(BaseModel):
+    """One voter on a post or comment, as shown to that content's author.
+
+    Owner-only: the forum exposes aggregate counts to everyone, and email is
+    the only user identifier the API has, so naming a disliker publicly would
+    hand out an address attached to a grievance.
+    """
+
+    email: str
+    value: int

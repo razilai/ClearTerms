@@ -2,9 +2,14 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Query, UploadFile
 
-from app.api.deps import CurrentUserDep, PageParamsDep, SessionDep
+from app.api.deps import (
+    CurrentUserDep,
+    IdPageParamsDep,
+    PageParamsDep,
+    SessionDep,
+)
 from app.schemas.forum import (
     AttachmentOut,
     CommentCreate,
@@ -16,6 +21,7 @@ from app.schemas.forum import (
     PostOut,
     VoteRequest,
     VoteResponse,
+    VoterOut,
 )
 from app.schemas.pagination import Page
 from app.services import forum as forum_service
@@ -127,3 +133,30 @@ async def vote_comment(
     comment_id: int, body: VoteRequest, session: SessionDep, user: CurrentUserDep
 ) -> VoteResponse:
     return await forum_service.vote_comment(session, user.id, comment_id, body.value)
+
+
+@router.get("/posts/{post_id}/votes", response_model=Page[VoterOut])
+async def list_post_voters(
+    post_id: int,
+    session: SessionDep,
+    user: CurrentUserDep,
+    page: IdPageParamsDep,
+    value: Annotated[int | None, Query(ge=-1, le=1)] = None,
+) -> Page[VoterOut]:
+    # Author-only; ``value`` narrows to likes (1) or dislikes (-1).
+    return await forum_service.list_post_voters(
+        session, user.id, post_id, page.limit, value, page.cursor
+    )
+
+
+@router.get("/comments/{comment_id}/votes", response_model=Page[VoterOut])
+async def list_comment_voters(
+    comment_id: int,
+    session: SessionDep,
+    user: CurrentUserDep,
+    page: IdPageParamsDep,
+    value: Annotated[int | None, Query(ge=-1, le=1)] = None,
+) -> Page[VoterOut]:
+    return await forum_service.list_comment_voters(
+        session, user.id, comment_id, page.limit, value, page.cursor
+    )

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.engine import get_session
 from app.models import User
-from app.schemas.pagination import decode_cursor
+from app.schemas.pagination import decode_cursor, decode_id_cursor
 from app.services import auth as auth_service
 from app.services import rate_limit as rate_limit_service
 from app.services.exceptions import InvalidTokenError
@@ -43,6 +43,30 @@ def page_params(
 
 
 PageParamsDep = Annotated[PageParams, Depends(page_params)]
+
+
+@dataclass
+class IdPageParams:
+    """Paging inputs for a list whose rows have no timestamp, so the cursor is
+    the last row's id alone (see app.schemas.pagination)."""
+
+    limit: int
+    cursor: int | None
+
+
+def id_page_params(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query()] = None,
+) -> IdPageParams:
+    if cursor is None:
+        return IdPageParams(limit=limit, cursor=None)
+    try:
+        return IdPageParams(limit=limit, cursor=decode_id_cursor(cursor))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from None
+
+
+IdPageParamsDep = Annotated[IdPageParams, Depends(id_page_params)]
 
 # Declares the OAuth2 password flow in OpenAPI (Swagger's Authorize button
 # works) and 401s on a missing/malformed Authorization header.

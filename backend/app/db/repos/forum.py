@@ -253,6 +253,32 @@ async def count_votes(session: AsyncSession, model: type[VoteT], target_ids: Ite
     return counts
 
 
+async def list_voters(
+    session: AsyncSession,
+    model: type[VoteT],
+    target_id: int,
+    limit: int,
+    value: int | None = None,
+    cursor: int | None = None,
+) -> list[VoteT]:
+    """One keyset page of the votes cast on a target, newest first.
+
+    Paged by ``id`` rather than ``(created_at, id)``: vote rows carry no
+    timestamp, and the primary key is monotonic, so it is already a total
+    order. ``value`` narrows to likes (1) or dislikes (-1). Fetches
+    ``limit + 1`` so the caller can detect a further page; the ``target_id``
+    index serves the lookup.
+    """
+    stmt = select(model).where(model.target_id == target_id)
+    if value is not None:
+        stmt = stmt.where(model.value == value)
+    if cursor is not None:
+        stmt = stmt.where(model.id < cursor)
+    stmt = stmt.order_by(model.id.desc()).limit(limit + 1)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def get_my_votes(session: AsyncSession, model: type[VoteT], user_id: int, target_ids: Iterable[int]) -> dict[int, int]:
     """Map target id -> this user's vote value. Unvoted targets are absent."""
     ids = list(target_ids)

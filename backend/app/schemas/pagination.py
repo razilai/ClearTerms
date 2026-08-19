@@ -60,3 +60,38 @@ def slice_page(
         rows = rows[:limit]
         return rows, encode_cursor(*key(rows[-1]))
     return rows, None
+
+
+# --- id-only cursors ---
+#
+# Rows that carry no timestamp cannot page by ``(created_at, id)``. The vote
+# tables are the case in point: one row per (user, target), no created_at, and
+# nothing to add one for — the primary key is already monotonic, so id alone is
+# a total order and a sufficient cursor.
+
+
+def encode_id_cursor(id_: int) -> str:
+    return base64.urlsafe_b64encode(str(id_).encode()).decode()
+
+
+def decode_id_cursor(cursor: str) -> int:
+    """Parse an id-only cursor; raise ValueError if malformed.
+
+    Callers (the api layer) translate the ValueError into a 400, exactly as
+    they do for the two-part cursor.
+    """
+    try:
+        return int(base64.urlsafe_b64decode(cursor.encode()).decode())
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        raise ValueError(f"invalid cursor: {cursor!r}") from exc
+
+
+def slice_page_by_id(
+    rows: list[R], limit: int, key: Callable[[R], int]
+) -> tuple[list[R], str | None]:
+    """``slice_page`` for id-only cursors: trim ``limit + 1`` to a page plus
+    the cursor for the next one."""
+    if len(rows) > limit:
+        rows = rows[:limit]
+        return rows, encode_id_cursor(key(rows[-1]))
+    return rows, None
