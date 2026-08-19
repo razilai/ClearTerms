@@ -15,6 +15,8 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getUnreadTotal, unreadKey } from './api/messages'
 import classes from './AppLayout.module.css'
 import { useAuth } from './auth/useAuth'
+import { NotificationBell } from './components/NotificationBell'
+import { useNotificationToasts } from './lib/useNotificationToasts'
 
 // The app is literally a numbered set of sections — the § markers are
 // structure, not decoration.
@@ -49,6 +51,10 @@ export function AppLayout() {
     refetchInterval: 30_000,
   })
   const unreadCount = unread?.unread_count ?? 0
+  // Polls the notification feed and toasts new events; the count it returns
+  // drives the bell. Independent of the §4 badge above: that counts messages
+  // not yet opened, this counts events not yet acknowledged.
+  const notificationCount = useNotificationToasts()
 
   return (
     <AppShell
@@ -69,6 +75,7 @@ export function AppLayout() {
             <span className={classes.brandMark}>Terms Review</span>
           </Group>
           <Group gap="md">
+            <NotificationBell unreadCount={notificationCount} />
             <Text className={classes.email} visibleFrom="xs">
               {email}
             </Text>
