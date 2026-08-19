@@ -30,8 +30,10 @@ from app.schemas.forum import (
     PostOut,
     VoteResponse,
 )
+from app.schemas.notifications import NotificationKind
 from app.schemas.pagination import Page, slice_page
 from app.services import media as media_service
+from app.services import notifications as notifications_service
 from app.services.exceptions import (
     NotFoundError,
     NotOwnerError,
@@ -369,6 +371,17 @@ async def add_comment(
     attachments = await _claim_attachments_for_comment(
         session, attachment_ids or [], user, comment.id
     )
+    # target_id is the comment id, so every comment notifies separately;
+    # comment_id is carried only so deleting the comment cascades this away.
+    await notifications_service.emit(
+        session,
+        recipient_id=post.user_id,
+        actor_id=user.id,
+        kind="post_comment",
+        target_id=comment.id,
+        post_id=post_id,
+        comment_id=comment.id,
+    )
     return _comment_out(
         comment,
         author_email=user.email,
@@ -418,20 +431,56 @@ async def delete_comment(session: AsyncSession, user_id: int, comment_id: int) -
 
 
 async def vote_post(session: AsyncSession, user_id: int, post_id: int, value: int) -> VoteResponse:
-    await _require_post(session, post_id)
-    return await _apply_vote(session, PostVote, user_id, post_id, value)
+    post = await _require_post(session, post_id)
+    return await _apply_vote(
+        session,
+        PostVote,
+        user_id,
+        post_id,
+        value,
+        owner_id=post.user_id,
+        kind="post_vote",
+        post_id=post_id,
+    )
 
 
 async def vote_comment(session: AsyncSession, user_id: int, comment_id: int, value: int) -> VoteResponse:
     comment = await forum_repo.get_comment(session, comment_id)
     if comment is None:
         raise NotFoundError("comment")
-    return await _apply_vote(session, CommentVote, user_id, comment_id, value)
+    return await _apply_vote(
+        session,
+        CommentVote,
+        user_id,
+        comment_id,
+        value,
+        owner_id=comment.user_id,
+        kind="comment_vote",
+        post_id=comment.post_id,
+        comment_id=comment_id,
+    )
 
 
-async def _apply_vote(session: AsyncSession, model: type[forum_repo.VoteT], user_id: int, target_id: int, value: int,) -> VoteResponse:
+async def _apply_vote(
+    session: AsyncSession,
+    model: type[forum_repo.VoteT],
+    user_id: int,
+    target_id: int,
+    value: int,
+    *,
+    owner_id: int,
+    kind: NotificationKind,
+    post_id: int,
+    comment_id: int | None = None,
+) -> VoteResponse:
     """Toggle semantics: re-sending the value you already hold clears it,
-    sending the opposite switches sides."""
+    sending the opposite switches sides.
+
+    Notifies the owner only when a vote is set or flipped. Clearing stays
+    silent and leaves any existing notification alone — telling someone their
+    like was withdrawn is noise, and re-liking would only bump the row it
+    already has.
+    """
     existing = await forum_repo.get_vote(session, model, user_id, target_id)
     if existing is not None and existing.value == value:
         await forum_repo.remove_vote(session, model, user_id, target_id)
@@ -439,6 +488,18 @@ async def _apply_vote(session: AsyncSession, model: type[forum_repo.VoteT], user
     else:
         await forum_repo.set_vote(session, model, user_id, target_id, value)
         my_vote = value
+        # target_id is the thing voted on, so one actor voting repeatedly
+        # collapses onto a single row.
+        await notifications_service.emit(
+            session,
+            recipient_id=owner_id,
+            actor_id=user_id,
+            kind=kind,
+            target_id=target_id,
+            value=value,
+            post_id=post_id,
+            comment_id=comment_id,
+        )
     counts = (await forum_repo.count_votes(session, model, [target_id])).get(
         target_id, forum_repo.VoteCounts(0, 0)
     )
