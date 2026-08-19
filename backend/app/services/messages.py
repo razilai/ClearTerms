@@ -28,6 +28,7 @@ from app.schemas.messages import (
 )
 from app.schemas.pagination import Page, slice_page
 from app.services import media as media_service
+from app.services import notifications as notifications_service
 from app.services.exceptions import (
     InvalidInputError,
     NotFoundError,
@@ -240,7 +241,7 @@ async def send_message(
     if not body.strip() and not attachment_ids:
         raise InvalidInputError("a message needs text or an attachment")
 
-    await _require_participant(session, user.id, conversation_id)
+    conversation = await _require_participant(session, user.id, conversation_id)
     message = await messages_repo.create_message(
         session, conversation_id, user.id, body
     )
@@ -250,6 +251,17 @@ async def send_message(
     # Bump with the message's own timestamp rather than a fresh clock reading,
     # so last_message_at always equals the newest message's created_at.
     await messages_repo.touch(session, conversation_id, message.created_at)
+    # target_id is the message id, so each message notifies separately. This is
+    # independent of the §4 unread badge, which counts messages not yet opened
+    # rather than events not yet acknowledged.
+    await notifications_service.emit(
+        session,
+        recipient_id=_other_id(conversation, user.id),
+        actor_id=user.id,
+        kind="dm",
+        target_id=message.id,
+        conversation_id=conversation_id,
+    )
     return _message_out(message, user.email, attachments)
 
 

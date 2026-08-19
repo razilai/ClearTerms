@@ -132,3 +132,34 @@ async def test_deleting_a_post_cascades_its_notifications_away(
     assert resp.status_code == 204, resp.text
     session.expire_all()
     assert await notifications_repo.list_for_user(session, alice_id, 10) == []
+
+
+async def test_every_dm_notifies_the_recipient_separately(
+    client: httpx.AsyncClient, session: AsyncSession, auth_headers: dict[str, str]
+) -> None:
+    """target_id is the message id, so a chatty sender produces one
+    notification per message rather than one per thread."""
+    bob = await signup_headers(client, "bob@example.com")
+    conversation_id = (
+        await client.post(
+            "/messages/conversations",
+            json={"recipient_email": "alice@example.com"},
+            headers=bob,
+        )
+    ).json()["id"]
+    for body in ("hello", "you there?"):
+        resp = await client.post(
+            f"/messages/conversations/{conversation_id}/messages",
+            json={"body": body},
+            headers=bob,
+        )
+        assert resp.status_code == 201, resp.text
+
+    alice_id = await _user_id(session, "alice@example.com")
+    bob_id = await _user_id(session, "bob@example.com")
+    rows = await notifications_repo.list_for_user(session, alice_id, 10)
+    assert len(rows) == 2
+    assert {n.kind for n in rows} == {"dm"}
+    assert {n.conversation_id for n in rows} == {conversation_id}
+    assert all(n.post_id is None for n in rows)
+    assert await notifications_repo.list_for_user(session, bob_id, 10) == []
