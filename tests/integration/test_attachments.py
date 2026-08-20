@@ -132,6 +132,89 @@ async def test_comment_with_attachment(
     assert len(comment_resp.json()["attachments"]) == 1
 
 
+async def test_attachment_read_requires_visibility(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """An unlinked upload is readable only by the uploader.
+
+    Without this the id space is enumerable: any authenticated account could
+    walk /forum/attachments/{id} and collect presigned URLs for media it has no
+    route to otherwise.
+    """
+    alice = await signup_headers(committing_client, "alice-vis@example.com")
+    mallory = await signup_headers(committing_client, "mallory-vis@example.com")
+    att_id, _ = await _upload_png(committing_client, alice)
+
+    assert (
+        await committing_client.get(
+            f"/forum/attachments/{att_id}", headers=alice
+        )
+    ).status_code == 200
+    outsider = await committing_client.get(
+        f"/forum/attachments/{att_id}", headers=mallory
+    )
+    # 404 rather than 403 so the response does not confirm the id exists.
+    assert outsider.status_code == 404
+
+
+async def test_attachment_on_a_post_is_readable_by_anyone(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """Posts are public, so their attachments stay readable to other users."""
+    alice = await signup_headers(committing_client, "alice-pub@example.com")
+    bob = await signup_headers(committing_client, "bob-pub@example.com")
+    att_id, _ = await _upload_png(committing_client, alice)
+    created = await committing_client.post(
+        "/forum/posts",
+        json={**POST_BODY, "attachment_ids": [att_id]},
+        headers=alice,
+    )
+    assert created.status_code == 201, created.text
+
+    resp = await committing_client.get(
+        f"/forum/attachments/{att_id}", headers=bob
+    )
+    assert resp.status_code == 200
+
+
+async def test_message_attachment_visible_to_participants_only(
+    committing_client: httpx.AsyncClient,
+    fake_storage: dict,
+) -> None:
+    """Both sides of a conversation may read its attachments; nobody else may.
+
+    The recipient is covered deliberately: message reads currently deliver
+    attachments inline, but the rule has to hold if the client starts polling
+    this route for media it did not upload.
+    """
+    alice = await signup_headers(committing_client, "alice-dm-vis@example.com")
+    bob = await signup_headers(committing_client, "bob-dm-vis@example.com")
+    outsider = await signup_headers(committing_client, "cy-dm-vis@example.com")
+
+    conversation_id = (
+        await committing_client.post(
+            "/messages/conversations",
+            json={"recipient_email": "bob-dm-vis@example.com"},
+            headers=alice,
+        )
+    ).json()["id"]
+    att_id, _ = await _upload_png(committing_client, alice)
+    sent = await committing_client.post(
+        f"/messages/conversations/{conversation_id}/messages",
+        json={"body": "private", "attachment_ids": [att_id]},
+        headers=alice,
+    )
+    assert sent.status_code == 201, sent.text
+
+    for headers, expected in ((alice, 200), (bob, 200), (outsider, 404)):
+        resp = await committing_client.get(
+            f"/forum/attachments/{att_id}", headers=headers
+        )
+        assert resp.status_code == expected
+
+
 async def test_cannot_claim_other_users_attachment(
     committing_client: httpx.AsyncClient,
     fake_storage: dict,

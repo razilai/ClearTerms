@@ -18,6 +18,7 @@ from app.core import storage
 from app.core.config import settings
 from app.db.repos import attachments as attachments_repo
 from app.db.repos import forum as forum_repo
+from app.db.repos import messages as messages_repo
 from app.db.repos import users as users_repo
 from app.models import Comment, CommentVote, Post, PostVote, User
 from app.models.attachment import Attachment
@@ -217,9 +218,47 @@ async def upload_attachment(
     return _attachment_out(attachment)
 
 
-async def get_attachment(session: AsyncSession, attachment_id: int) -> AttachmentOut:
+async def _can_view_attachment(
+    session: AsyncSession, user_id: int, attachment: Attachment
+) -> bool:
+    """Whether ``user_id`` may read ``attachment``.
+
+    Visibility follows the container rather than the uploader: readable by the
+    uploader, by any authenticated user when it belongs to a post or comment
+    (both public), and by either participant when it belongs to a direct
+    message. An attachment not yet linked to anything is visible only to its
+    uploader.
+
+    The endpoint serves attachments of every kind, which is why forum code
+    resolves a conversation here.
+    """
+    if attachment.user_id == user_id:
+        return True
+    if attachment.post_id is not None or attachment.comment_id is not None:
+        return True
+    if attachment.message_id is not None:
+        message = await messages_repo.get_message(session, attachment.message_id)
+        if message is None:
+            return False
+        conversation = await messages_repo.get_conversation(
+            session, message.conversation_id
+        )
+        return conversation is not None and user_id in (
+            conversation.user_a_id,
+            conversation.user_b_id,
+        )
+    return False
+
+
+async def get_attachment(
+    session: AsyncSession, user_id: int, attachment_id: int
+) -> AttachmentOut:
     attachment = await attachments_repo.get(session, attachment_id)
     if attachment is None:
+        raise NotFoundError("attachment")
+    if not await _can_view_attachment(session, user_id, attachment):
+        # NotFoundError rather than NotOwnerError: a 403 confirms the id exists,
+        # which is what makes the id space enumerable for other users' media.
         raise NotFoundError("attachment")
     return _attachment_out(attachment)
 

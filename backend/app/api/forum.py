@@ -44,7 +44,7 @@ async def upload_attachment(
 async def get_attachment(
     attachment_id: int, session: SessionDep, user: CurrentUserDep
 ) -> AttachmentOut:
-    return await forum_service.get_attachment(session, attachment_id)
+    return await forum_service.get_attachment(session, user.id, attachment_id)
 
 
 @router.post("/posts", response_model=PostOut, status_code=201)
